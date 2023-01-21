@@ -1,6 +1,42 @@
 ZGrab 2.0
 =========
 
+This custom fork of ZGrab 2.0 includes a new "Minecraft" module as well as a "Minecraft2" module, using https://github.com/iverly/go-mcping/ which allows for ZGrab to scan for Minecraft servers between 1.8.0-1.19.3.
+
+The difference with these two modules is that "Minecraft" is purely using the aforementioned library, whereas "Minecraft2" is designed to use the zgrab2 utilities and be more efficient.
+
+The sample output is as follows when utilising minecraft2:
+
+```json
+{
+    "domain": "192.168.0.1",
+    "data": {
+      "minecraft": {
+        "status": "success",
+        "protocol": "minecraft",
+        "result": {
+          "latency": "1ms",
+          "motd": "This is a custom MOTD",
+          "version": "Paper 1.19.2",
+          "playerstats": {
+            "maxPlayers": 32,
+            "onlinePlayers": 1
+          },
+          "players": [
+            {
+              "uuid": "0000000e-a0a0-00a0-0a00-00a0a0000000",
+              "name": "paradise"
+            }
+          ]
+        },
+        "timestamp": "2023-01-15T17:17:36+01:00"
+      }
+    }
+}
+```
+  
+***
+
 ZGrab is a fast, modular application-layer network scanner designed for completing large Internet-wide surveys. ZGrab is built to work with ZMap (ZMap identifies L4 responsive hosts, ZGrab performs in-depth, follow-up L7 handshakes). Unlike many other network scanners, ZGrab outputs detailed transcripts of network handshakes (e.g., all messages exchanged in a TLS handshake) for offline analysis.  
 
 ZGrab 2.0 contains a new, modular ZGrab framework, which fully supersedes https://github.com/zmap/zgrab.
