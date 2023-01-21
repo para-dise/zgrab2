@@ -4,7 +4,10 @@ go 1.12
 
 require (
 	github.com/RumbleDiscovery/jarm-go v0.0.6 // indirect
+	github.com/SpencerSharkey/gomc v0.0.0-20171215012004-e16df85c4e5f // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
+	github.com/iverly/go-mcping v1.0.0 // indirect
+	github.com/jmoiron/jsonq v0.0.0-20150511023944-e874b168d07e // indirect
 	github.com/prometheus/client_golang v1.10.0
 	github.com/prometheus/common v0.20.0 // indirect
 	github.com/sirupsen/logrus v1.8.1
