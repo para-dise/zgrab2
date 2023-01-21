@@ -20,7 +20,7 @@ import (
 type Flags struct {
 	zgrab2.BaseFlags
 	MaxTries int `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
-	MaxTimeout int `long:"max-timeout" default:"1" description:"Number of seconds to wait before timing out."`
+	MaxTimeout int `long:"max-timeout" default:"2" description:"Number of seconds to wait before timing out."`
 	EnableLatency bool `long:"enable-latency" description:"Enable latency measurement. May drastically increase scan time."`
 }
 
@@ -360,9 +360,9 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 
 	sendPacket(target.Host(), uint16(scanner.GetPort()), &conn)
 	
-	var waitTime = 1 * time.Second
-	if scanner.config.Timeout != 0 {
-		waitTime = time.Duration(scanner.config.Timeout) * time.Second
+	var waitTime = 2 * time.Second
+	if scanner.config.MaxTimeout != 0 {
+		waitTime = time.Duration(scanner.config.MaxTimeout) * time.Second
 	}
 
 	ret, _ = zgrab2.ReadAvailableWithOptions(conn, 65535, waitTime, waitTime, 65535)
