@@ -410,6 +410,8 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		scanLatency = getLatency(target.Host(), uint16(scanner.GetPort())).String()
 	}
 
+	defer conn.Close()
+
 	return zgrab2.SCAN_SUCCESS, &Results {
 		Latency:   scanLatency,
 		Protocol:  fmt.Sprintf("%d", decode.Protocol),
