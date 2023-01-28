@@ -222,6 +222,20 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 				motd = dataMap["description"].(string)
 			}
 		}
+
+		// check if MOTD is empty, this is the case for BungeeCord & its forks
+		if motd == "" {
+			if _, ok := dataMap["description"].(map[string]interface{})["extra"]; ok {
+				if _, ok := dataMap["description"].(map[string]interface{})["extra"].([]interface{}); ok {
+					extraArray := dataMap["description"].(map[string]interface{})["extra"].([]interface{})
+					for _, value := range extraArray {
+						if _, ok := value.(map[string]interface{})["text"]; ok {
+							motd += value.(map[string]interface{})["text"].(string)
+						}
+					}
+				}
+			}
+		}
 	
 		// create new PlayerCount
 		playerCount := types.PlayerCount{}
@@ -366,6 +380,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	}
 
 	ret, _ = zgrab2.ReadAvailableWithOptions(conn, 65535, waitTime, waitTime, 65535)
+	defer conn.Close()
 
 	if len(ret) < 3 {
 		err = errors.New("error to small response")
@@ -402,6 +417,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	decode, err := decodeResponse(string(ret))
 
 	if err != nil {
+		err = errors.New("panic")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 
@@ -409,8 +425,6 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	if scanner.config.EnableLatency {
 		scanLatency = getLatency(target.Host(), uint16(scanner.GetPort())).String()
 	}
-
-	defer conn.Close()
 
 	return zgrab2.SCAN_SUCCESS, &Results {
 		Latency:   scanLatency,
