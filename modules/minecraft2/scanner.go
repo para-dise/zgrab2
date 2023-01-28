@@ -313,10 +313,24 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 					} else {
 						fmlMod.Version = ""
 					}
-
 					forgeModList = append(forgeModList, fmlMod)
 				}
 			}
+		}
+
+		// check if "modpackData" is present
+		if _, ok := dataMap["modpackData"]; ok {
+			// change "Version" to begin with "Fabric"
+			version = "Fabric " + version
+
+			fmlMod := FMLMod{}
+			if _, ok := dataMap["modpackData"].(map[string]interface{})["name"]; ok {
+				fmlMod.ModId = dataMap["modpackData"].(map[string]interface{})["name"].(string)
+			}
+			if _, ok := dataMap["modpackData"].(map[string]interface{})["version"]; ok {
+				fmlMod.Version = dataMap["modpackData"].(map[string]interface{})["version"].(string)
+			}
+			forgeModList = append(forgeModList, fmlMod)
 		}
 
 
