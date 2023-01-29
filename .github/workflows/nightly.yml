@@ -3,8 +3,19 @@ name: Nightly build
 on: [push]
 
 jobs:
-  build:
+  remove-old-artifacts:
+    permissions: write-all
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
+    steps:
+      - name: Remove old artifacts
+        uses: c-hive/gha-remove-artifacts@v1
+        with:
+          age: '1 second'
+  build:
+    
+    needs: [ remove-old-artifacts ]
     runs-on: ubuntu-latest
     strategy:
       matrix:
