@@ -25,3 +25,26 @@ jobs:
         with:
           name: Go-results-${{ matrix.go-version }}
           path: ./cmd/zgrab2/zgrab2_*
+  create_release:
+      permissions: write-all
+      runs-on: ubuntu-latest
+      name: Create Release
+      needs: [ build ]
+      if: ${{ needs.check_date.outputs.should_run != 'false' }}
+      steps:
+        - name: Download Artifact
+          uses: actions/download-artifact@v3
+          with:
+            name: Go-results-1.19.x
+        - name: List files
+          run: ls
+        - name: Nightly Release
+          uses: softprops/action-gh-release@v1
+          with:
+            name: Nightly
+            tag_name: nightly
+            body: |
+              **This release has been build by Github Actions**
+              [Link to build](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            files: |
+              zgrab2_*
