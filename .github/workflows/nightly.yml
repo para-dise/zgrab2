@@ -4,6 +4,7 @@ on: [push]
 
 jobs:
   remove-old-artifacts:
+    permissions: write-all
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
