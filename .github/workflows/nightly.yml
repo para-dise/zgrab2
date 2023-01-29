@@ -11,7 +11,7 @@ jobs:
       - name: Remove old artifacts
         uses: c-hive/gha-remove-artifacts@v1
         with:
-          age: '1 year'
+          age: '1 second'
   build:
     
     needs: [ remove-old-artifacts ]
