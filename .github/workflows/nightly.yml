@@ -13,7 +13,8 @@ jobs:
         with:
           age: '1 year'
   build:
-
+    
+    needs: [ remove-old-artifacts ]
     runs-on: ubuntu-latest
     strategy:
       matrix:
