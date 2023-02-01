@@ -219,24 +219,40 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 					motd = dataMap["description"].(map[string]interface{})["text"].(string)
 				}
 			} else {
+				// convert description to string
 				motd = dataMap["description"].(string)
 			}
 		}
 
 		// check if MOTD is empty, this is the case for BungeeCord & its forks
 		if motd == "" {
-			if _, ok := dataMap["description"].(map[string]interface{})["extra"]; ok {
-				if _, ok := dataMap["description"].(map[string]interface{})["extra"].([]interface{}); ok {
-					extraArray := dataMap["description"].(map[string]interface{})["extra"].([]interface{})
-					for _, value := range extraArray {
-						if _, ok := value.(map[string]interface{})["text"]; ok {
-							motd += value.(map[string]interface{})["text"].(string)
+			// if description is a map
+			if _, ok := dataMap["description"].(map[string]interface{}); ok {
+				if _, ok := dataMap["description"].(map[string]interface{})["extra"]; ok {
+					if _, ok := dataMap["description"].(map[string]interface{})["extra"].([]interface{}); ok {
+						extraArray := dataMap["description"].(map[string]interface{})["extra"].([]interface{})
+						for _, value := range extraArray {
+							// In some strange cases, the extra array contains strings
+
+							// TODO: What if the extra array has both a string and a map?
+
+							if _, ok := value.(string); ok {
+								motd += value.(string)
+								continue
+							}
+
+							if _, ok := value.(map[string]interface{})["text"]; ok {
+								// if text is a string
+								if _, ok := value.(map[string]interface{})["text"].(string); ok {
+									motd += value.(map[string]interface{})["text"].(string)
+								}
+							}
 						}
 					}
 				}
 			}
 		}
-	
+
 		// create new PlayerCount
 		playerCount := types.PlayerCount{}
 
@@ -429,6 +445,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	ret = ret[:bytes.LastIndexByte(ret, '}')+1]
 
 	decode, err := decodeResponse(string(ret))
+	// TODO: Add proper error handling
 
 	if err != nil {
 		err = errors.New("panic")
