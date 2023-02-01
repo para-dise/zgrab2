@@ -210,7 +210,7 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 			}
 		}
 
-		var motd = "Unknown"
+		var motd = ""
 		if _, ok := dataMap["description"]; ok {
 			// check if description is a map or a string (BungeeCord)
 			if _, ok := dataMap["description"].(map[string]interface{}); ok {
