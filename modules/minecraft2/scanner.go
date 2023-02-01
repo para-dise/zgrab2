@@ -219,8 +219,9 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 					motd = dataMap["description"].(map[string]interface{})["text"].(string)
 				}
 			} else {
-				// convert description to string
-				motd = dataMap["description"].(string)
+				if _, ok := dataMap["description"].(string); ok {
+					motd = dataMap["description"].(string)
+				}
 			}
 		}
 
@@ -235,12 +236,11 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 							// In some strange cases, the extra array contains strings
 
 							// TODO: What if the extra array has both a string and a map?
-
 							if _, ok := value.(string); ok {
 								motd += value.(string)
 								continue
 							}
-
+							
 							if _, ok := value.(map[string]interface{})["text"]; ok {
 								// if text is a string
 								if _, ok := value.(map[string]interface{})["text"].(string); ok {
@@ -250,7 +250,24 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 						}
 					}
 				}
+			} else {
+				// if motd is an array of objects
+				if _, ok := dataMap["description"].([]interface{}); ok {
+					extraArray := dataMap["description"].([]interface{})
+					for _, value := range extraArray {
+						if _, ok := value.(map[string]interface{})["text"]; ok {
+							// if text is a string
+							if _, ok := value.(map[string]interface{})["text"].(string); ok {
+								motd += value.(map[string]interface{})["text"].(string)
+							}
+						}
+					}
+				}
 			}
+		}
+
+		if motd == "" {
+			motd = "Unknown"
 		}
 
 		// create new PlayerCount
