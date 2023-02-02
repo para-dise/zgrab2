@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"time"
 	"fmt"
+	"runtime"
+	"os"
 )
 
 // Flags give the command-line flags for the banner module.
@@ -177,16 +179,40 @@ func writePort(b *bytes.Buffer, port uint16) {
 	b.Write(a)
 }
 
-func decodeResponse(response string) (*CustomPingResponse, error) {
+func decodeResponse(response string, hostAddress string) (*CustomPingResponse, error) {
 
 	var panicErr error
 	// prevent panics
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Recovered in f", r)
-			panicErr = fmt.Errorf("Recovered in f: %v", r)
+	
+			// Get the traceback
+			trace := make([]byte, 1<<16)
+			n := runtime.Stack(trace, true)
+			trace = trace[:n]
+	
+			// Write the traceback to a file
+			file, err := os.Create("traceback_" + hostAddress + ".txt")
+			if err != nil {
+				fmt.Println("Error creating file:", err)
+				return
+			}
+			defer file.Close()
+
+			// append hostAddress to traceback
+			trace = append([]byte(hostAddress + " - "), trace...)
+
+			_, err = file.WriteString(string(trace))
+			if err != nil {
+				fmt.Println("Error writing to file:", err)
+				return
+			}
+	
+			// Set the error message
+			panicErr = fmt.Errorf("Recovered in f: %v\nTraceback:\n%s", r, trace)
 		}
-	}()
+	}()	
 
 	if panicErr != nil {
 		return nil, panicErr
@@ -351,6 +377,8 @@ func decodeResponse(response string) (*CustomPingResponse, error) {
 			}
 		}
 
+		fmt.Println(dataMap["modinfox"].(map[string]interface{})["modLisst"])
+
 		// check if "modpackData" is present
 		if _, ok := dataMap["modpackData"]; ok {
 			// change "Version" to begin with "Fabric"
@@ -404,6 +432,20 @@ func getLatency(host string, port uint16) time.Duration {
 }
 
 func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
+
+	hasPanic := false
+
+	/* In case of a panic, recover and return a ScanError */
+	defer func() {
+		if r := recover(); r != nil {
+			hasPanic = true
+		}
+	}()
+
+	if hasPanic {
+		panicErr := errors.New("Panic")
+		return zgrab2.TryGetScanStatus(panicErr), nil, panicErr
+	}
 
 	/* Begin new Minecraft scan */
 	var (
@@ -461,7 +503,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	// remove all characters after last '}'
 	ret = ret[:bytes.LastIndexByte(ret, '}')+1]
 
-	decode, err := decodeResponse(string(ret))
+	decode, err := decodeResponse(string(ret), target.Host())
 	// TODO: Add proper error handling
 
 	if err != nil {
