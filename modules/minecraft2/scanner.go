@@ -377,8 +377,6 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			}
 		}
 
-		fmt.Println(dataMap["modinfox"].(map[string]interface{})["modLisst"])
-
 		// check if "modpackData" is present
 		if _, ok := dataMap["modpackData"]; ok {
 			// change "Version" to begin with "Fabric"
