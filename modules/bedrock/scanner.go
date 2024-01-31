@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // Network Util Functions
@@ -218,14 +219,16 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 			MaxPlayers    int `json:"maxPlayers"`
 			OnlinePlayers int `json:"onlinePlayers"`
 		}{}
+		
+		playerstats.MaxPlayers, _ = strconv.Atoi(parsedData.MaxPlayers)
+		playerstats.OnlinePlayers, _ = strconv.Atoi(parsedData.CurrentPlayers)
 
 		// return Results struct
 		result.GameID = parsedData.GameID
 		result.Description = parsedData.Description
 		result.ProtocolVersion = parsedData.ProtocolVersion
 		result.GameVersion = parsedData.GameVersion
-		result.PlayerStats.MaxPlayers = playerstats.MaxPlayers
-		result.PlayerStats.OnlinePlayers = playerstats.OnlinePlayers
+		result.PlayerStats = playerstats
 		result.Name = parsedData.Name
 		result.Mode = parsedData.Mode
 
