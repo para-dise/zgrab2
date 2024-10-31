@@ -55,13 +55,13 @@ ZGrab 2.0 contains a new, modular ZGrab framework, which fully supersedes https:
 You can run ZGrab 2.0 with our official Docker image. For example, to scan a single website using the HTTP module, you can use:
 
 ```shell
-echo 'example.com' | docker run --rm -i ghcr.io/zmap/zgrab2 http
+echo 'example.com' | docker run --rm -i ghcr.io/para-dise/zgrab2 http
 ```
 
 For more complex scanning scenarios, such as using multiple modules or custom configurations, you can create a configuration file and pass it to the container:
 
 ```shell
-docker run --rm -i -v /path/to/your/config.ini:/config.ini ghcr.io/zmap/zgrab2 multiple -c /config.ini
+docker run --rm -i -v /path/to/your/config.ini:/config.ini ghcr.io/para-dise/zgrab2 multiple -c /config.ini
 ```
 
 Replace `/path/to/your/config.ini` with the path to your configuration file on the host machine. See [Multiple Module Usage](#multiple-module-usage) for more details on configurations.
@@ -71,7 +71,7 @@ Replace `/path/to/your/config.ini` with the path to your configuration file on t
 For Go 1.17 and later you must build from source:
 
 ```shell
-git clone https://github.com/zmap/zgrab2.git
+git clone https://github.com/para-dise/zgrab2.git
 cd zgrab2
 make
 ./zgrab2
@@ -85,13 +85,13 @@ You will need to have a valid `$GOPATH` set up, for more information about `$GOP
 Once you have a working `$GOPATH`, run:
 
 ```shell
-go get github.com/zmap/zgrab2
+go get github.com/para-dise/zgrab2
 ```
 
-This will install zgrab under `$GOPATH/src/github.com/zmap/zgrab2`
+This will install zgrab under `$GOPATH/src/github.com/para-dise/zgrab2`
 
 ```shell
-cd $GOPATH/src/github.com/zmap/zgrab2
+cd $GOPATH/src/github.com/para-dise/zgrab2
 make
 ```
 
