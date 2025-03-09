@@ -2,27 +2,28 @@
 package minecraft2
 
 import (
-	"github.com/zmap/zgrab2"
-	"log"
-	"github.com/iverly/go-mcping/api/types"
 	"bytes"
 	"encoding/binary"
-	"errors"
-	"net"
-	_ "time"
-	_ "io"
 	"encoding/json"
-	"time"
+	"errors"
 	"fmt"
-	"runtime"
+	_ "io"
+	"log"
+	"net"
 	"os"
+	"runtime"
+	"time"
+	_ "time"
+
+	"github.com/iverly/go-mcping/api/types"
+	"github.com/zmap/zgrab2"
 )
 
 // Flags give the command-line flags for the banner module.
 type Flags struct {
 	zgrab2.BaseFlags
-	MaxTries int `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
-	MaxTimeout int `long:"max-timeout" default:"2" description:"Number of seconds to wait before timing out."`
+	MaxTries      int  `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
+	MaxTimeout    int  `long:"max-timeout" default:"2" description:"Number of seconds to wait before timing out."`
 	EnableLatency bool `long:"enable-latency" description:"Enable latency measurement. May drastically increase scan time."`
 }
 
@@ -36,37 +37,37 @@ type Scanner struct {
 }
 
 type Results struct {
-	Latency		string `json:"latency",omitempty`
-	Protocol	string `json:"protocol"`
-	Favicon		string `json:"favicon"`
-	Motd		string `json:"motd"`
-	Version		string `json:"version"`
+	Latency     string `json:"latency",omitempty`
+	Protocol    string `json:"protocol"`
+	Favicon     string `json:"favicon"`
+	Motd        string `json:"motd"`
+	Version     string `json:"version"`
 	PlayerStats struct {
-        MaxPlayers    int `json:"maxPlayers"`
-        OnlinePlayers int `json:"onlinePlayers"`
-    } `json:"playerstats"`
+		MaxPlayers    int `json:"maxPlayers"`
+		OnlinePlayers int `json:"onlinePlayers"`
+	} `json:"playerstats"`
 	Players []Player `json:"players",omitempty`
-	ModList	 []FMLMod `json:"modlist",omitempty`
+	ModList []FMLMod `json:"modlist",omitempty`
 }
 
 type Player struct {
-    UUID  string `json:"uuid"`
-    Name  string `json:"name"`
+	UUID string `json:"uuid"`
+	Name string `json:"name"`
 }
 
 type CustomPingResponse struct {
-	Latency     uint // Latency between you and the server
-	PlayerCount types.PlayerCount // Players count information of the server
-	Protocol    int // Protocol number of the server
-	Favicon     string // Favicon in base64 of the server
-	Motd        string // Motd of the server without color
-	Version     string // Version of the server
+	Latency     uint                 // Latency between you and the server
+	PlayerCount types.PlayerCount    // Players count information of the server
+	Protocol    int                  // Protocol number of the server
+	Favicon     string               // Favicon in base64 of the server
+	Motd        string               // Motd of the server without color
+	Version     string               // Version of the server
 	Sample      []types.PlayerSample // List of connected players on the server
-	ModList	 []FMLMod // List of FML mods on the server
+	ModList     []FMLMod             // List of FML mods on the server
 }
 
 type FMLMod struct {
-	ModId string `json:"modId"`
+	ModId   string `json:"modId"`
 	Version string `json:"version"`
 }
 
@@ -137,13 +138,12 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 }
 
 func ConvertPlayerSampleToPlayer(playersSample []types.PlayerSample) []Player {
-    var players []Player
-    for _, sample := range playersSample {
-        players = append(players, Player{UUID: sample.UUID, Name: sample.Name})
-    }
-    return players
+	var players []Player
+	for _, sample := range playersSample {
+		players = append(players, Player{UUID: sample.UUID, Name: sample.Name})
+	}
+	return players
 }
-
 
 func sendPacket(host string, port uint16, conn *net.Conn) {
 	var dataBuf bytes.Buffer
@@ -186,12 +186,12 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Recovered in f", r)
-	
+
 			// Get the traceback
 			trace := make([]byte, 1<<16)
 			n := runtime.Stack(trace, true)
 			trace = trace[:n]
-	
+
 			// Write the traceback to a file
 			file, err := os.Create("traceback_" + hostAddress + ".txt")
 			if err != nil {
@@ -201,18 +201,18 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			defer file.Close()
 
 			// append hostAddress to traceback
-			trace = append([]byte(hostAddress + " - "), trace...)
+			trace = append([]byte(hostAddress+" - "), trace...)
 
 			_, err = file.WriteString(string(trace))
 			if err != nil {
 				fmt.Println("Error writing to file:", err)
 				return
 			}
-	
+
 			// Set the error message
 			panicErr = fmt.Errorf("Recovered in f: %v\nTraceback:\n%s", r, trace)
 		}
-	}()	
+	}()
 
 	if panicErr != nil {
 		return nil, panicErr
@@ -225,7 +225,6 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 	if dataMap, ok := data.(map[string]interface{}); ok {
 		// create new PingResponse
 		pingResponse := CustomPingResponse{}
-
 
 		// check if version field exists
 		var version = "Unknown"
@@ -266,7 +265,7 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 								motd += value.(string)
 								continue
 							}
-							
+
 							if _, ok := value.(map[string]interface{})["text"]; ok {
 								// if text is a string
 								if _, ok := value.(map[string]interface{})["text"].(string); ok {
@@ -323,7 +322,7 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 				protocol = int(dataMap["version"].(map[string]interface{})["protocol"].(float64))
 			}
 		}
-		
+
 		// check if favicon field exists
 		var favicon string
 		if _, ok := dataMap["favicon"]; ok {
@@ -392,7 +391,6 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			forgeModList = append(forgeModList, fmlMod)
 		}
 
-
 		pingResponse.Latency = 0
 		pingResponse.PlayerCount = playerCount
 		pingResponse.Protocol = protocol
@@ -429,6 +427,23 @@ func getLatency(host string, port uint16) time.Duration {
 	return time.Since(start)
 }
 
+// read_varint reads a varint from the given byte[]
+func read_varint(data []byte) (uint64, int, error) {
+	var value uint64
+	var shift uint
+	for i, b := range data {
+		value |= uint64(b&0x7F) << shift
+		if b&0x80 == 0 {
+			return value, i + 1, nil
+		}
+		shift += 7
+		if shift >= 64 {
+			return 0, 0, errors.New("varint is too long")
+		}
+	}
+	return 0, 0, errors.New("incomplete varint")
+}
+
 func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
 
 	hasPanic := false
@@ -454,13 +469,13 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 
 	// Connect to the server
 	conn, err = target.Open(&scanner.config.BaseFlags)
-	
+
 	if err != nil {
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 
 	sendPacket(target.Host(), uint16(scanner.GetPort()), &conn)
-	
+
 	var waitTime = 2 * time.Second
 	if scanner.config.MaxTimeout != 0 {
 		waitTime = time.Duration(scanner.config.MaxTimeout) * time.Second
@@ -473,13 +488,25 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		err = errors.New("error to small response")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
-	// truncate first 2 bytes
-	ret = ret[2:]
-	// check for null byte
-	if ret[0] != 0 {
-		err = errors.New("error no null byte")
+
+	// Length: varint, Packet ID: varint, Data: byte[]
+	// attempt to read length of packet
+	_, varint_size, err := read_varint(ret)
+	if err != nil {
+		err = errors.New("error reading varint (packet len)")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
+
+	// truncate first varint
+	ret = ret[varint_size:]
+	// attempt to read packet ID
+	_, varint_size, err = read_varint(ret)
+	if err != nil {
+		err = errors.New("error reading varint (packet id)")
+		return zgrab2.TryGetScanStatus(err), nil, err
+	}
+	// truncate second varint
+	ret = ret[varint_size:]
 
 	if len(ret) < 10 {
 		err = errors.New("error to small response")
@@ -514,12 +541,12 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		scanLatency = getLatency(target.Host(), uint16(scanner.GetPort())).String()
 	}
 
-	return zgrab2.SCAN_SUCCESS, &Results {
-		Latency:   scanLatency,
-		Protocol:  fmt.Sprintf("%d", decode.Protocol),
-		Favicon:   decode.Favicon,
-		Motd:      decode.Motd,
-		Version:   decode.Version,
+	return zgrab2.SCAN_SUCCESS, &Results{
+		Latency:  scanLatency,
+		Protocol: fmt.Sprintf("%d", decode.Protocol),
+		Favicon:  decode.Favicon,
+		Motd:     decode.Motd,
+		Version:  decode.Version,
 		PlayerStats: struct {
 			MaxPlayers    int `json:"maxPlayers"`
 			OnlinePlayers int `json:"onlinePlayers"`
