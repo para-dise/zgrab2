@@ -3,11 +3,12 @@ package minecraft
 
 import (
 	_ "fmt"
-	"github.com/zmap/zgrab2"
 	"log"
-	"github.com/iverly/go-mcping/mcping"
-	"github.com/iverly/go-mcping/api/types"
 	"strconv"
+
+	"github.com/iverly/go-mcping/api/types"
+	"github.com/iverly/go-mcping/mcping"
+	"github.com/zmap/zgrab2"
 )
 
 // Flags give the command-line flags for the banner module.
@@ -26,21 +27,21 @@ type Scanner struct {
 }
 
 type Results struct {
-	Latency		string `json:"latency"`
-	Protocol	string `json:"protocol"`
-	Favicon		string `json:"protocol"`
-	Motd		string `json:"motd"`
-	Version		string `json:"version"`
+	Latency     string `json:"latency"`
+	Protocol    string `json:"protocol"`
+	Favicon     string `json:"protocol"`
+	Motd        string `json:"motd"`
+	Version     string `json:"version"`
 	PlayerStats struct {
-        MaxPlayers    int `json:"maxPlayers"`
-        OnlinePlayers int `json:"onlinePlayers"`
-    } `json:"playerstats"`
+		MaxPlayers    int `json:"maxPlayers"`
+		OnlinePlayers int `json:"onlinePlayers"`
+	} `json:"playerstats"`
 	Players []Player `json:"players",omitempty`
 }
 
 type Player struct {
-    UUID  string `json:"uuid"`
-    Name  string `json:"name"`
+	UUID string `json:"uuid"`
+	Name string `json:"name"`
 }
 
 // RegisterModule is called by modules/banner.go to register the scanner.
@@ -110,11 +111,11 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 }
 
 func ConvertPlayerSampleToPlayer(playersSample []types.PlayerSample) []Player {
-    var players []Player
-    for _, sample := range playersSample {
-        players = append(players, Player{UUID: sample.UUID, Name: sample.Name})
-    }
-    return players
+	var players []Player
+	for _, sample := range playersSample {
+		players = append(players, Player{UUID: sample.UUID, Name: sample.Name})
+	}
+	return players
 }
 
 func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
@@ -127,11 +128,11 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	}
 
 	return zgrab2.SCAN_SUCCESS, &Results{
-		Latency:   strconv.FormatUint(uint64(res.Latency), 10),
-		Protocol:  strconv.FormatUint(uint64(res.Protocol), 10),
-		Favicon:   res.Favicon,
-		Motd:      res.Motd,
-		Version:   res.Version,
+		Latency:  strconv.FormatUint(uint64(res.Latency), 10),
+		Protocol: strconv.FormatUint(uint64(res.Protocol), 10),
+		Favicon:  res.Favicon,
+		Motd:     res.Motd,
+		Version:  res.Version,
 		PlayerStats: struct {
 			MaxPlayers    int `json:"maxPlayers"`
 			OnlinePlayers int `json:"onlinePlayers"`

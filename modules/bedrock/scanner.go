@@ -2,28 +2,29 @@
 package bedrock
 
 import (
-	"github.com/zmap/zgrab2"
-    "net"
-	"encoding/binary"
-    "strings"
-	"log"
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
+	"net"
 	"strconv"
+	"strings"
+
+	"github.com/zmap/zgrab2"
 )
 
 // Network Util Functions
 
 // ReadBigInt64BE reads a big-endian encoded int64 from the buffer at the specified offset.
 func ReadBigInt64BE(buffer []byte, offset int) int64 {
-    return int64(binary.BigEndian.Uint64(buffer[offset:]))
+	return int64(binary.BigEndian.Uint64(buffer[offset:]))
 }
 
 // ReadStringFromBuffer reads a string from the buffer at the specified offset.
 func ReadStringFromBuffer(buffer []byte, offset int) string {
-    length := int(binary.BigEndian.Uint16(buffer[offset:]))
-    return string(buffer[offset+2 : offset+2+length])
+	length := int(binary.BigEndian.Uint16(buffer[offset:]))
+	return string(buffer[offset+2 : offset+2+length])
 }
 
 // ParseAdvertiseString parses the advertise string into a struct.
@@ -34,27 +35,27 @@ func ParseAdvertiseString(advertiseStr string) (*AdvertiseData, error) {
 	}
 
 	return &AdvertiseData{
-		GameID:         parts[0],
-		Description:    parts[1],
+		GameID:          parts[0],
+		Description:     parts[1],
 		ProtocolVersion: parts[2],
-		GameVersion:    parts[3],
-		CurrentPlayers: parts[4],
-		MaxPlayers:     parts[5],
-		Name:           parts[7],
-		Mode:           parts[8],
+		GameVersion:     parts[3],
+		CurrentPlayers:  parts[4],
+		MaxPlayers:      parts[5],
+		Name:            parts[7],
+		Mode:            parts[8],
 	}, nil
 }
 
 // AdvertiseData represents the parsed advertise data.
 type AdvertiseData struct {
-    GameID         string
-    Description    string
-    ProtocolVersion string
-    GameVersion    string
-    CurrentPlayers string
-    MaxPlayers     string
-    Name           string
-    Mode           string
+	GameID          string
+	Description     string
+	ProtocolVersion string
+	GameVersion     string
+	CurrentPlayers  string
+	MaxPlayers      string
+	Name            string
+	Mode            string
 }
 
 // Flags give the command-line flags for the banner module.
@@ -74,16 +75,16 @@ type Scanner struct {
 }
 
 type Results struct {
-	GameID		string `json:"gameid"`
-	Description	string `json:"description"`
-	ProtocolVersion		string `json:"protocol"`
-	GameVersion		string `json:"version"`
-	PlayerStats struct {
-        MaxPlayers    int `json:"maxPlayers"`
-        OnlinePlayers int `json:"onlinePlayers"`
-    } `json:"playerstats"`
-	Name	string `json:"name"`
-	Mode 	string `json:"mode"`
+	GameID          string `json:"gameid"`
+	Description     string `json:"description"`
+	ProtocolVersion string `json:"protocol"`
+	GameVersion     string `json:"version"`
+	PlayerStats     struct {
+		MaxPlayers    int `json:"maxPlayers"`
+		OnlinePlayers int `json:"onlinePlayers"`
+	} `json:"playerstats"`
+	Name string `json:"name"`
+	Mode string `json:"mode"`
 }
 
 // RegisterModule is called by modules/banner.go to register the scanner.
@@ -157,17 +158,17 @@ func Receive(sock net.Conn) (int, []byte, error) {
 	ReceiveChunkSize := 8192
 	buffer := bytes.NewBuffer(nil)
 	for {
-	  chunk := make([]byte, ReceiveChunkSize)
-	  read, err := sock.Read(chunk)
-	  if err != nil {
-		return received, buffer.Bytes(), err
-	  }
-	  received += read
-	  buffer.Write(chunk[:read])
-  
-	  if read == 0 || read < ReceiveChunkSize {
-		break
-	  }
+		chunk := make([]byte, ReceiveChunkSize)
+		read, err := sock.Read(chunk)
+		if err != nil {
+			return received, buffer.Bytes(), err
+		}
+		received += read
+		buffer.Write(chunk[:read])
+
+		if read == 0 || read < ReceiveChunkSize {
+			break
+		}
 	}
 	return received, buffer.Bytes(), nil
 }
@@ -175,20 +176,20 @@ func Receive(sock net.Conn) (int, []byte, error) {
 func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
 	var panicErr error // this seems to not really work, but we do recover from panics in the main loop
 
-    defer func() {
-        if r := recover(); r != nil {
-            fmt.Println("Recovered from panic:", r)
-            panicErr = fmt.Errorf("panic occurred: %v", r)
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered from panic:", r)
+			panicErr = fmt.Errorf("panic occurred: %v", r)
+		}
+	}()
 
-    sock, err := target.OpenUDP(&scanner.config.BaseFlags, &scanner.config.UDPFlags)
-    if err != nil {
-        return zgrab2.TryGetScanStatus(err), nil, err
-    }
-    defer sock.Close()
+	sock, err := target.OpenUDP(&scanner.config.BaseFlags, &scanner.config.UDPFlags)
+	if err != nil {
+		return zgrab2.TryGetScanStatus(err), nil, err
+	}
+	defer sock.Close()
 
-    result := &Results{}
+	result := &Results{}
 	for i := 0; i < scanner.config.MaxTries; i++ {
 		// Send packet
 		_, err = sock.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
@@ -219,7 +220,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 			MaxPlayers    int `json:"maxPlayers"`
 			OnlinePlayers int `json:"onlinePlayers"`
 		}{}
-		
+
 		playerstats.MaxPlayers, _ = strconv.Atoi(parsedData.MaxPlayers)
 		playerstats.OnlinePlayers, _ = strconv.Atoi(parsedData.CurrentPlayers)
 
@@ -236,8 +237,8 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	}
 
 	if panicErr != nil {
-        return zgrab2.SCAN_PROTOCOL_ERROR, nil, panicErr
-    }
+		return zgrab2.SCAN_PROTOCOL_ERROR, nil, panicErr
+	}
 
-    return zgrab2.SCAN_SUCCESS, result, nil
+	return zgrab2.SCAN_SUCCESS, result, nil
 }
