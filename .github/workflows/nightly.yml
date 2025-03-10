@@ -32,7 +32,7 @@ jobs:
       - name: Cross-compile with go
         run: cd ./cmd/zgrab2 && gox -os='!darwin'
       - name: Upload Go test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Go-results-${{ matrix.go-version }}
           path: ./cmd/zgrab2/zgrab2_*
