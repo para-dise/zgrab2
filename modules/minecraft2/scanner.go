@@ -538,6 +538,12 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			}
 		}
 
+		// neoforge is special and uses the "isModded" field
+		if _, ok := dataMap["isModded"]; ok {
+			// change "Version" to begin with "NeoForge"
+			version = "NeoForge " + version
+		}
+
 		pingResponse.Latency = 0
 		pingResponse.PlayerCount = playerCount
 		pingResponse.Protocol = protocol
