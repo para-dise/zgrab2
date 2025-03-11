@@ -15,6 +15,8 @@ import (
 	"time"
 	_ "time"
 
+	"unicode/utf16"
+
 	"github.com/iverly/go-mcping/api/types"
 	"github.com/zmap/zgrab2"
 )
@@ -177,6 +179,134 @@ func writePort(b *bytes.Buffer, port uint16) {
 	a := make([]byte, 2)
 	binary.BigEndian.PutUint16(a, port)
 	b.Write(a)
+}
+
+type Channel struct {
+	Path     string
+	Version  uint64
+	Required bool
+}
+
+func decodeForgePayload(data []byte) ([]FMLMod, error) {
+	// We'll collect all mods here
+	var mods []FMLMod
+	offset := 0
+
+	// 1) Read boolean (truncation flag): 1 byte
+	if offset+1 > len(data) {
+		return nil, errors.New("not enough data for truncation boolean")
+	}
+	trunc := (data[offset] != 0)
+	offset++
+
+	// 2) Read short (big-endian) for modCount
+	if offset+2 > len(data) {
+		return nil, errors.New("not enough data for modCount short")
+	}
+	modCount := binary.BigEndian.Uint16(data[offset : offset+2])
+	offset += 2
+
+	// 3) For each mod
+	for i := 0; i < int(modCount); i++ {
+		// read channelSizeAndVersionFlag as varint
+		chSizeAndFlag, n, err := read_varint(data[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("failed reading channelSizeAndVersionFlag: %w", err)
+		}
+		offset += n
+		isIgnoreServerOnly := (chSizeAndFlag & 1) == 1
+		channelSize := chSizeAndFlag >> 1
+
+		// read mod ID
+		modID, n, err := read_mc_string(data[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("failed reading mod ID: %w", err)
+		}
+		offset += n
+
+		var modVersion string
+		if !isIgnoreServerOnly {
+			modVersion, n, err = read_mc_string(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading mod version: %w", err)
+			}
+			offset += n
+		}
+
+		// read the channels
+		channels := make([]Channel, 0, channelSize)
+		for c := 0; c < int(channelSize); c++ {
+			path, n, err := read_mc_string(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading channel path: %w", err)
+			}
+			offset += n
+
+			ver, n, err := read_varint(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading channel version: %w", err)
+			}
+			offset += n
+
+			req, n, err := read_bool(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading channel required: %w", err)
+			}
+			offset += n
+
+			channels = append(channels, Channel{
+				Path:     path,
+				Version:  ver,
+				Required: req,
+			})
+
+			//fmt.Println("Channel = ", path, ver, req)
+		}
+
+		mods = append(mods, FMLMod{
+			ModId:   modID,
+			Version: modVersion,
+		})
+		//fmt.Println("ModID = ", modID, modVersion)
+	}
+
+	// 4) If not truncated, read “non-mod” channels
+	if !trunc {
+		// read varint for the nonMod count
+		nonModCount, n, err := read_varint(data[offset:])
+		if err != nil {
+			return nil, fmt.Errorf("failed reading nonModCount: %w", err)
+		}
+		offset += n
+
+		for i := 0; i < int(nonModCount); i++ {
+			// resource location is just a MC string
+			rl, n, err := read_mc_string(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading resource location: %w", err)
+			}
+			offset += n
+
+			ver, n, err := read_varint(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading version: %w", err)
+			}
+			offset += n
+
+			req, n, err := read_bool(data[offset:])
+			if err != nil {
+				return nil, fmt.Errorf("failed reading bool: %w", err)
+			}
+			offset += n
+
+			// TODO: Use this data
+			_ = rl
+			_ = ver
+			_ = req
+		}
+	}
+
+	return mods, nil
 }
 
 func decodeResponse(response string, hostAddress string) (*CustomPingResponse, error) {
@@ -391,6 +521,23 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			forgeModList = append(forgeModList, fmlMod)
 		}
 
+		// apparently forge also uses "forgeData" now
+		if _, ok := dataMap["forgeData"]; ok {
+			// change "Version" to begin with "Forge"
+			version = "Forge " + version
+			// decompress forgeData "d" field
+			if _, ok := dataMap["forgeData"].(map[string]interface{})["d"]; ok {
+				decompressed := decodeOptimized(dataMap["forgeData"].(map[string]interface{})["d"].(string))
+				// use forge's custom decoding
+				mods, err := decodeForgePayload(decompressed.Bytes())
+				if err != nil {
+					fmt.Println("Error decoding forgeData:", err)
+				} else {
+					forgeModList = append(forgeModList, mods...)
+				}
+			}
+		}
+
 		pingResponse.Latency = 0
 		pingResponse.PlayerCount = playerCount
 		pingResponse.Protocol = protocol
@@ -442,6 +589,76 @@ func read_varint(data []byte) (uint64, int, error) {
 		}
 	}
 	return 0, 0, errors.New("incomplete varint")
+}
+
+// read_mc_string reads a “Minecraft-style” UTF string: first a VarInt length,
+// then that many bytes of UTF-8 data.
+func read_mc_string(data []byte) (value string, readLen int, err error) {
+	length, n, err := read_varint(data)
+	if err != nil {
+		return "", 0, err
+	}
+	if length > uint64(len(data)-n) {
+		return "", 0, errors.New("string length goes out of bounds")
+	}
+	start := n
+	end := n + int(length)
+	strData := data[start:end]
+	return string(strData), end, nil
+}
+
+// read_bool reads a single byte (0 or 1) from data[offset]
+func read_bool(data []byte) (val bool, readLen int, err error) {
+	if len(data) < 1 {
+		return false, 0, errors.New("not enough data for bool")
+	}
+	val = (data[0] != 0)
+	return val, 1, nil
+}
+
+// decodeOptimized decodes a Java-style UTF-16 encoded string into a byte buffer.
+func decodeOptimized(s string) *bytes.Buffer {
+	// Decode UTF-16 from Go's UTF-8 string representation
+	runes := []rune(s)                  // Convert to runes, which preserves UTF-16 semantics
+	utf16Encoded := utf16.Encode(runes) // Convert to UTF-16 code units (uint16 array)
+
+	if len(utf16Encoded) < 2 {
+		return nil // Invalid input
+	}
+
+	// Extract size from the first two UTF-16 code units
+	size0 := int(utf16Encoded[0])
+	size1 := int(utf16Encoded[1])
+	size := size0 | (size1 << 15)
+
+	buf := bytes.NewBuffer(make([]byte, 0, size))
+
+	stringIndex := 2
+	buffer := 0 // Buffer for bits (22 bits max)
+	bitsInBuf := 0
+
+	// Process each UTF-16 code unit
+	for stringIndex < len(utf16Encoded) {
+		for bitsInBuf >= 8 {
+			buf.WriteByte(byte(buffer))
+			buffer >>= 8
+			bitsInBuf -= 8
+		}
+
+		c := int(utf16Encoded[stringIndex])
+		buffer |= (c & 0x7FFF) << bitsInBuf
+		bitsInBuf += 15
+		stringIndex++
+	}
+
+	// Write remaining bits to buffer
+	for buf.Len() < size && bitsInBuf > 0 {
+		buf.WriteByte(byte(buffer))
+		buffer >>= 8
+		bitsInBuf -= 8
+	}
+
+	return buf
 }
 
 func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
