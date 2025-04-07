@@ -19,6 +19,10 @@ import (
 	"github.com/zmap/zgrab2"
 )
 
+const (
+	VERSION_FLAG_IGNORESERVERONLY = 0b1
+)
+
 // Flags give the command-line flags for the banner module.
 type Flags struct {
 	zgrab2.BaseFlags
@@ -66,9 +70,16 @@ type CustomPingResponse struct {
 	ModList     []FMLMod             // List of FML mods on the server
 }
 
+type ModChannel struct {
+	Name     string `json:"name"`
+	Version  uint64 `json:"version"`
+	Required bool   `json:"required"`
+}
+
 type FMLMod struct {
-	ModId   string `json:"modId"`
-	Version string `json:"version"`
+	ModId    string `json:"modId"`
+	Version  string `json:"version"`
+	Channels []Channel
 }
 
 // RegisterModule is called by modules/banner.go to register the scanner.
@@ -180,146 +191,9 @@ func writePort(b *bytes.Buffer, port uint16) {
 }
 
 type Channel struct {
-	Path     string
+	Name     string
 	Version  uint64
 	Required bool
-}
-
-func decodeForgePayload(data []byte) ([]FMLMod, map[string]struct {
-	Version  string
-	Required bool
-}, bool, error) {
-	// We'll collect all mods here
-	var mods []FMLMod
-	// Map for channels similar to Java implementation
-	channels := make(map[string]struct {
-		Version  string
-		Required bool
-	})
-
-	offset := 0
-
-	// 1) Read boolean (truncation flag): 1 byte
-	if offset+1 > len(data) {
-		return nil, nil, false, errors.New("not enough data for truncation boolean")
-	}
-	trunc := (data[offset] != 0)
-	offset++
-
-	// 2) Read short (big-endian) for modCount
-	if offset+2 > len(data) {
-		return nil, nil, false, errors.New("not enough data for modCount short")
-	}
-	modCount := binary.BigEndian.Uint16(data[offset : offset+2])
-	offset += 2
-
-	// 3) For each mod
-	for i := 0; i < int(modCount); i++ {
-		// read channelSizeAndVersionFlag as varint
-		chSizeAndFlag, n, err := read_varint(data[offset:])
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("failed reading channelSizeAndVersionFlag: %w", err)
-		}
-		offset += n
-		isIgnoreServerOnly := (chSizeAndFlag & 1) == 1
-		channelSize := chSizeAndFlag >> 1
-
-		// read mod ID
-		modID, n, err := read_mc_string(data[offset:])
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("failed reading mod ID: %w", err)
-		}
-		offset += n
-
-		var modVersion string
-		if !isIgnoreServerOnly {
-			modVersion, n, err = read_mc_string(data[offset:])
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed reading mod version: %w", err)
-			}
-			offset += n
-		} else {
-			// Match Java implementation which sets a specific constant for ignored server-only mods
-			modVersion = "IGNORESERVERONLY" // This should match NetworkConstants.IGNORESERVERONLY
-		}
-
-		// read the channels
-		for c := 0; c < int(channelSize); c++ {
-			path, n, err := read_mc_string(data[offset:])
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed reading channel path: %w", err)
-			}
-			offset += n
-
-			// Read channel version as a string, not a varint
-			verStr, n, err := read_mc_string(data[offset:])
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed reading channel version: %w", err)
-			}
-			offset += n
-
-			req, n, err := read_bool(data[offset:])
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("failed reading channel required: %w", err)
-			}
-			offset += n
-
-			// Create a resource location key similar to Java's ResourceLocation
-			channelKey := modID + ":" + path
-			channels[channelKey] = struct {
-				Version  string
-				Required bool
-			}{
-				Version:  verStr,
-				Required: req,
-			}
-		}
-
-		mods = append(mods, FMLMod{
-			ModId:   modID,
-			Version: modVersion,
-		})
-	}
-
-	// 4) Always read "non-mod" channels regardless of truncation flag
-	nonModCount, n, err := read_varint(data[offset:])
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("failed reading nonModCount: %w", err)
-	}
-	offset += n
-
-	for i := 0; i < int(nonModCount); i++ {
-		// Read resource location as a MC string
-		rl, n, err := read_mc_string(data[offset:])
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("failed reading resource location: %w", err)
-		}
-		offset += n
-
-		// Read channel version as a string, not a varint
-		verStr, n, err := read_mc_string(data[offset:])
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("failed reading version string: %w", err)
-		}
-		offset += n
-
-		req, n, err := read_bool(data[offset:])
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("failed reading bool: %w", err)
-		}
-		offset += n
-
-		// Store the channel data
-		channels[rl] = struct {
-			Version  string
-			Required bool
-		}{
-			Version:  verStr,
-			Required: req,
-		}
-	}
-
-	return mods, channels, trunc, nil
 }
 
 func decodeResponse(response string, hostAddress string) (*CustomPingResponse, error) {
@@ -542,7 +416,7 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			if _, ok := dataMap["forgeData"].(map[string]interface{})["d"]; ok {
 				decompressed := decodeOptimized(dataMap["forgeData"].(map[string]interface{})["d"].(string))
 				// use forge's custom decoding
-				mods, _, _, err := decodeForgePayload(decompressed.Bytes())
+				mods, err := decodeForgePayload(decompressed.Bytes())
 				if err != nil {
 					fmt.Println("Error decoding forgeData:", err)
 				} else {
@@ -608,58 +482,6 @@ func read_varint(data []byte) (uint64, int, error) {
 		}
 	}
 	return 0, 0, errors.New("incomplete varint")
-}
-
-// read_mc_string reads a “Minecraft-style” UTF string: first a VarInt length,
-// then that many bytes of UTF-8 data.
-func read_mc_string(data []byte) (value string, readLen int, err error) {
-	// Read the string length as a VarInt
-	length, n, err := read_varint(data)
-	if err != nil {
-		return "", 0, err
-	}
-
-	// Check if we have enough data
-	if length > uint64(len(data)-n) {
-		return "", 0, errors.New("string length goes out of bounds")
-	}
-
-	// Read the UTF-8 bytes
-	start := n
-	end := n + int(length)
-	strData := data[start:end]
-
-	// Convert bytes to a string
-	str := string(strData)
-
-	// Validate the string against Minecraft's constraints
-	// 1. Check that the string is valid UTF-8 (Go's string conversion already ensures this)
-	// 2. Count UTF-16 code units (surrogate pairs count as 2)
-	utf16Length := 0
-	for _, r := range str {
-		// Characters above U+FFFF require surrogate pairs in UTF-16
-		if r > 0xFFFF {
-			utf16Length += 2
-		} else {
-			utf16Length++
-		}
-	}
-
-	// Ensure the string doesn't exceed maximum allowed length (32767 UTF-16 code units)
-	if utf16Length > 32767 {
-		return "", 0, fmt.Errorf("string exceeds maximum length of 32767 UTF-16 code units")
-	}
-
-	return str, end, nil
-}
-
-// read_bool reads a single byte (0 or 1) from data[offset]
-func read_bool(data []byte) (val bool, readLen int, err error) {
-	if len(data) < 1 {
-		return false, 0, errors.New("not enough data for bool")
-	}
-	val = (data[0] != 0)
-	return val, 1, nil
 }
 
 // decodeOptimized decodes a Java-style UTF-16 encoded string into a byte buffer.
@@ -819,4 +641,174 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		Players: ConvertPlayerSampleToPlayer(decode.Sample),
 		ModList: decode.ModList,
 	}, nil
+}
+
+/**
+ * MC Helper Functions
+ **/
+func read_boolean(data []byte, offset int) (bool, int) {
+	return data[offset] == 1, 1
+}
+
+func read_unsigned_short(data []byte, offset int) (uint16, int) {
+	value := uint16(data[offset])<<8 | uint16(data[offset+1])
+	return value, 2
+}
+
+func read_varint_new(data []byte, offset int) (uint32, int) {
+	var result uint32
+	var shift uint32
+	var bytesRead int
+
+	for {
+		if offset+bytesRead >= len(data) {
+			panic("read_varint: buffer overrun")
+		}
+
+		b := data[offset+bytesRead]
+		result |= uint32(b&0x7F) << shift
+		bytesRead++
+
+		if (b & 0x80) == 0 {
+			break
+		}
+		shift += 7
+
+		if shift >= 35 {
+			panic("read_varint: varint too big")
+		}
+	}
+
+	return result, bytesRead
+}
+
+func ReadMCString(data []byte, offset int, maxCodeUnits int) (string, int, error) {
+	strLen, bytesRead := read_varint_new(data, offset) // now returns the length and bytes consumed
+	totalOffset := offset + bytesRead
+
+	if totalOffset+int(strLen) > len(data) {
+		return "", offset, errors.New("not enough bytes to read the string")
+	}
+
+	strBytes := data[totalOffset : totalOffset+int(strLen)]
+	str := string(strBytes)
+
+	if countUTF16CodeUnits(str) > maxCodeUnits {
+		return "", offset, errors.New("string exceeds UTF-16 code unit limit")
+	}
+
+	// Return the string, and total bytes consumed (length of varint + string bytes)
+	return str, bytesRead + int(strLen), nil
+}
+
+func countUTF16CodeUnits(s string) int {
+	count := 0
+	for _, r := range s {
+		if r <= 0xFFFF {
+			count++
+		} else {
+			count += 2 // surrogate pair
+		}
+	}
+	return count
+}
+
+func decodeForgePayload(data []byte) ([]FMLMod, error) {
+	var modList []FMLMod
+	// Extract if the data is Truncated first (Bool)
+	var offset int = 0
+
+	truncated, bytesRead := read_boolean(data, offset)
+
+	if truncated {
+		return nil, fmt.Errorf("data is truncated")
+	}
+	offset += bytesRead // now += 1
+
+	modCount, bytesRead := read_unsigned_short(data, offset)
+	offset += bytesRead
+
+	for i := 0; i < int(modCount); i++ {
+		// read varint: channelSizeAndVersionFlag
+		channelSizeAndVersionFlag, bytesRead := read_varint_new(data, offset)
+		offset += bytesRead
+		channelSize := channelSizeAndVersionFlag >> 1
+		// var isIgnoreServerOnly = (channelSizeAndVersionFlag & VERSION_FLAG_IGNORESERVERONLY) != 0;
+		isIgnoreServerOnly := (channelSizeAndVersionFlag & VERSION_FLAG_IGNORESERVERONLY) != 0
+
+		// read varint prefixed string: modId
+		modId, bytesRead, err := ReadMCString(data, offset, 32767)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read modId: %w", err)
+		}
+		offset += bytesRead
+
+		// var modVersion = isIgnoreServerOnly ? IExtensionPoint.DisplayTest.IGNORESERVERONLY : buf.readUtf();
+		var modVersion string
+		if !isIgnoreServerOnly {
+			modVersion, bytesRead, err = ReadMCString(data, offset, 32767)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read modVersion: %w", err)
+			}
+			offset += bytesRead
+		} else {
+			modVersion = "IGNORESERVERONLY"
+		}
+
+		var channels []Channel
+
+		for i1 := 0; i1 < int(channelSize); i1++ {
+			channelName, bytesRead, err := ReadMCString(data, offset, 32767)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read channelName: %w", err)
+			}
+			offset += bytesRead
+
+			// read channel version
+			channelVersion, bytesRead := read_varint_new(data, offset)
+			offset += bytesRead
+
+			// read requiredOnClient bool
+			requiredOnClient, bytesRead := read_boolean(data, offset)
+			offset += bytesRead
+
+			// append channel to channels
+			channels = append(channels, Channel{
+				Name:     channelName,
+				Version:  uint64(channelVersion),
+				Required: requiredOnClient,
+			})
+		}
+
+		// append mod to modList
+		modList = append(modList, FMLMod{
+			ModId:    modId,
+			Version:  modVersion,
+			Channels: channels,
+		})
+	}
+
+	// var nonModChannelCount = buf.readVarInt();
+	nonModChannelCount, bytesRead := read_varint_new(data, offset)
+	offset += bytesRead
+
+	for i := 0; i < int(nonModChannelCount); i++ {
+		channelName, bytesRead, err := ReadMCString(data, offset, 32767)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read channelName: %w", err)
+		}
+		offset += bytesRead
+
+		channelVersion, bytesRead := read_varint_new(data, offset)
+		offset += bytesRead
+
+		requiredOnClient, bytesRead := read_boolean(data, offset)
+		offset += bytesRead
+
+		_ = channelName
+		_ = channelVersion
+		_ = requiredOnClient
+	}
+
+	return modList, nil
 }
