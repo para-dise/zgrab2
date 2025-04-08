@@ -192,7 +192,7 @@ func writePort(b *bytes.Buffer, port uint16) {
 
 type Channel struct {
 	Name     string
-	Version  uint64
+	Version  string
 	Required bool
 }
 
@@ -410,15 +410,24 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 
 		// apparently forge also uses "forgeData" now
 		if _, ok := dataMap["forgeData"]; ok {
+			// print fmlNetworkVersion
+			isModernNetworkVersion := false
+			if _, ok := dataMap["forgeData"].(map[string]interface{})["fmlNetworkVersion"]; ok {
+				version := dataMap["forgeData"].(map[string]interface{})["fmlNetworkVersion"].(float64)
+				if version == 0 {
+					isModernNetworkVersion = true
+				}
+			}
 			// change "Version" to begin with "Forge"
 			version = "Forge " + version
 			// decompress forgeData "d" field
 			if _, ok := dataMap["forgeData"].(map[string]interface{})["d"]; ok {
 				decompressed := decodeOptimized(dataMap["forgeData"].(map[string]interface{})["d"].(string))
+
 				// use forge's custom decoding
-				mods, err := decodeForgePayload(decompressed.Bytes())
+				mods, err := decodeForgePayload(decompressed.Bytes(), isModernNetworkVersion)
 				if err != nil {
-					fmt.Println("Error decoding forgeData:", err)
+					fmt.Println("Error decoding forgeData:", err, " - ", hostAddress)
 				} else {
 					forgeModList = append(forgeModList, mods...)
 				}
@@ -713,7 +722,7 @@ func countUTF16CodeUnits(s string) int {
 	return count
 }
 
-func decodeForgePayload(data []byte) ([]FMLMod, error) {
+func decodeForgePayload(data []byte, isModernNetworkVersion bool) ([]FMLMod, error) {
 	var modList []FMLMod
 	// Extract if the data is Truncated first (Bool)
 	var offset int = 0
@@ -765,8 +774,18 @@ func decodeForgePayload(data []byte) ([]FMLMod, error) {
 			offset += bytesRead
 
 			// read channel version
-			channelVersion, bytesRead := read_varint_new(data, offset)
-			offset += bytesRead
+			var channelVersion string
+			if isModernNetworkVersion {
+				chVer, bytesRead := read_varint_new(data, offset)
+				offset += bytesRead
+				channelVersion = fmt.Sprintf("%d", chVer)
+			} else {
+				channelVersion, bytesRead, err = ReadMCString(data, offset, 32767)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read channelVersion: %w", err)
+				}
+				offset += bytesRead
+			}
 
 			// read requiredOnClient bool
 			requiredOnClient, bytesRead := read_boolean(data, offset)
@@ -775,7 +794,7 @@ func decodeForgePayload(data []byte) ([]FMLMod, error) {
 			// append channel to channels
 			channels = append(channels, Channel{
 				Name:     channelName,
-				Version:  uint64(channelVersion),
+				Version:  channelVersion,
 				Required: requiredOnClient,
 			})
 		}
