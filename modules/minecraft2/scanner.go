@@ -422,10 +422,13 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 			version = "Forge " + version
 			// decompress forgeData "d" field
 			if _, ok := dataMap["forgeData"].(map[string]interface{})["d"]; ok {
-				decompressed := decodeOptimized(dataMap["forgeData"].(map[string]interface{})["d"].(string))
+				decompressed, err := decodeOptimized(dataMap["forgeData"].(map[string]interface{})["d"].(string))
+				if err != nil {
+					fmt.Println("Error decompressing forgeData:", err, " - ", hostAddress)
+				}
 
 				// use forge's custom decoding
-				mods, err := decodeForgePayload(decompressed.Bytes(), isModernNetworkVersion)
+				mods, err := decodeForgePayload(decompressed, isModernNetworkVersion)
 				if err != nil {
 					fmt.Println("Error decoding forgeData:", err, " - ", hostAddress)
 				} else {
@@ -494,32 +497,25 @@ func read_varint(data []byte) (uint64, int, error) {
 }
 
 // decodeOptimized decodes a Java-style UTF-16 encoded string into a byte buffer.
-func decodeOptimized(s string) *bytes.Buffer {
-	// Decode UTF-16 from Go's UTF-8 string representation
-	runes := []rune(s) // Convert to runes
-
+func decodeOptimized(s string) ([]byte, error) {
+	runes := []rune(s) // each rune represents a Java char (UTF-16 code unit)
 	if len(runes) < 2 {
-		return nil // Invalid input
+		return nil, fmt.Errorf("string too short")
 	}
 
-	// Extract size from the first two characters
 	size0 := int(runes[0])
 	size1 := int(runes[1])
 	size := size0 | (size1 << 15)
 
-	buf := bytes.NewBuffer(make([]byte, 0, size))
-
+	var buf bytes.Buffer
 	stringIndex := 2
-	buffer := 0 // Buffer for bits (22 bits max)
+	buffer := 0
 	bitsInBuf := 0
 
-	// Process each character
 	for stringIndex < len(runes) {
-		// Write complete bytes from buffer
 		for bitsInBuf >= 8 {
-			buf.WriteByte(byte(buffer))
-			// Logical right shift (unsigned) to match Java's >>>
-			buffer = int(uint32(buffer) >> 8)
+			buf.WriteByte(byte(buffer & 0xFF))
+			buffer >>= 8
 			bitsInBuf -= 8
 		}
 
@@ -529,15 +525,13 @@ func decodeOptimized(s string) *bytes.Buffer {
 		stringIndex++
 	}
 
-	// Write remaining bits to buffer
-	for buf.Len() < size && bitsInBuf > 0 {
-		buf.WriteByte(byte(buffer))
-		// Logical right shift (unsigned) to match Java's >>>
-		buffer = int(uint32(buffer) >> 8)
+	for buf.Len() < size {
+		buf.WriteByte(byte(buffer & 0xFF))
+		buffer >>= 8
 		bitsInBuf -= 8
 	}
 
-	return buf
+	return buf.Bytes(), nil
 }
 
 func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
@@ -814,18 +808,29 @@ func decodeForgePayload(data []byte, isModernNetworkVersion bool) ([]FMLMod, err
 	for i := 0; i < int(nonModChannelCount); i++ {
 		channelName, bytesRead, err := ReadMCString(data, offset, 32767)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read channelName: %w", err)
+			return nil, fmt.Errorf("failed to read non-mod channelName: %w", err)
 		}
 		offset += bytesRead
 
-		channelVersion, bytesRead := read_varint_new(data, offset)
-		offset += bytesRead
+		var chanVer string
+		if isModernNetworkVersion {
+			channelVersion, bytesRead := read_varint_new(data, offset)
+			offset += bytesRead
+			chanVer = fmt.Sprintf("%d", channelVersion)
+		} else {
+			channelVersion, bytesRead, err := ReadMCString(data, offset, 32767)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read non-mod channelVersion: %w", err)
+			}
+			offset += bytesRead
+			chanVer = channelVersion
+		}
 
 		requiredOnClient, bytesRead := read_boolean(data, offset)
 		offset += bytesRead
 
 		_ = channelName
-		_ = channelVersion
+		_ = chanVer
 		_ = requiredOnClient
 	}
 
