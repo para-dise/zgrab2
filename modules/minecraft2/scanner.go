@@ -196,6 +196,47 @@ type Channel struct {
 	Required bool
 }
 
+func convertColorToMinecraftColor(color string) string {
+	// convert color name to § character
+	switch color {
+	case "black":
+		return "§0"
+	case "dark_blue":
+		return "§1"
+	case "dark_green":
+		return "§2"
+	case "dark_aqua":
+		return "§3"
+	case "dark_red":
+		return "§4"
+	case "dark_purple":
+		return "§5"
+	case "gold":
+		return "§6"
+	case "gray":
+		return "§7"
+	case "dark_gray":
+		return "§8"
+	case "blue":
+		return "§9"
+	case "green":
+		return "§a"
+	case "aqua":
+		return "§b"
+	case "red":
+		return "§c"
+	case "light_purple":
+		return "§d"
+	case "yellow":
+		return "§e"
+	case "white":
+		return "§f"
+	default:
+		// if color is not recognized, return empty string
+		return ""
+	}
+}
+
 func decodeResponse(response string, hostAddress string) (*CustomPingResponse, error) {
 
 	var panicErr error
@@ -259,6 +300,27 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 				// if text exists under description, use it
 				if _, ok := dataMap["description"].(map[string]interface{})["text"]; ok {
 					motd = dataMap["description"].(map[string]interface{})["text"].(string)
+				}
+
+				// check "extra" array exists under description
+				descMap := dataMap["description"].(map[string]interface{})
+
+				if extraRaw, ok := descMap["extra"]; ok {
+					if extraArray, ok := extraRaw.([]interface{}); ok {
+						for _, value := range extraArray {
+							if str, ok := value.(string); ok {
+								motd += str
+							} else if valMap, ok := value.(map[string]interface{}); ok {
+								// check for color
+								if color, ok := valMap["color"].(string); ok {
+									motd += convertColorToMinecraftColor(color)
+								}
+								if text, ok := valMap["text"].(string); ok {
+									motd += text
+								}
+							}
+						}
+					}
 				}
 			} else {
 				if _, ok := dataMap["description"].(string); ok {
