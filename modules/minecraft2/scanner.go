@@ -237,7 +237,7 @@ func convertColorToMinecraftColor(color string) string {
 	}
 }
 
-const maxExtraDepth = 10 // prevent infinite recursion in extra parsing
+const maxExtraDepth = 50 // prevent infinite recursion in extra parsing
 
 func parseExtra(extra interface{}, depth int) string {
 	if depth > maxExtraDepth {
