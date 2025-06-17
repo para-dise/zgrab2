@@ -237,6 +237,39 @@ func convertColorToMinecraftColor(color string) string {
 	}
 }
 
+const maxExtraDepth = 10 // prevent infinite recursion in extra parsing
+
+func parseExtra(extra interface{}, depth int) string {
+	if depth > maxExtraDepth {
+		return "[...]"
+	}
+
+	result := ""
+
+	switch value := extra.(type) {
+	case string:
+		result += value
+
+	case map[string]interface{}:
+		if color, ok := value["color"].(string); ok {
+			result += convertColorToMinecraftColor(color)
+		}
+		if text, ok := value["text"].(string); ok {
+			result += text
+		}
+		if nestedExtra, ok := value["extra"]; ok {
+			result += parseExtra(nestedExtra, depth+1)
+		}
+
+	case []interface{}:
+		for _, item := range value {
+			result += parseExtra(item, depth+1)
+		}
+	}
+
+	return result
+}
+
 func decodeResponse(response string, hostAddress string) (*CustomPingResponse, error) {
 
 	var panicErr error
@@ -305,22 +338,8 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 				// check "extra" array exists under description
 				descMap := dataMap["description"].(map[string]interface{})
 
-				if extraRaw, ok := descMap["extra"]; ok {
-					if extraArray, ok := extraRaw.([]interface{}); ok {
-						for _, value := range extraArray {
-							if str, ok := value.(string); ok {
-								motd += str
-							} else if valMap, ok := value.(map[string]interface{}); ok {
-								// check for color
-								if color, ok := valMap["color"].(string); ok {
-									motd += convertColorToMinecraftColor(color)
-								}
-								if text, ok := valMap["text"].(string); ok {
-									motd += text
-								}
-							}
-						}
-					}
+				if extra, ok := descMap["extra"]; ok {
+					motd += parseExtra(extra, 0)
 				}
 			} else {
 				if _, ok := dataMap["description"].(string); ok {
