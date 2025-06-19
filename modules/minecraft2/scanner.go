@@ -29,6 +29,7 @@ type Flags struct {
 	MaxTries      int  `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
 	MaxTimeout    int  `long:"max-timeout" default:"2" description:"Number of seconds to wait before timing out."`
 	EnableLatency bool `long:"enable-latency" description:"Enable latency measurement. May drastically increase scan time."`
+	GrabAuthMode  bool `long:"grab-auth-mode" description:"Enable auth mode grab. This will add the auth mode to the results."`
 }
 
 // Module is the implementation of the zgrab2.Module interface.
@@ -50,8 +51,9 @@ type Results struct {
 		MaxPlayers    int `json:"maxPlayers"`
 		OnlinePlayers int `json:"onlinePlayers"`
 	} `json:"playerstats"`
-	Players []Player `json:"players",omitempty`
-	ModList []FMLMod `json:"modlist",omitempty`
+	Players  []Player `json:"players",omitempty`
+	ModList  []FMLMod `json:"modlist",omitempty`
+	AuthMode int      `json:"authMode"` // -1 = unknown, 0 = offline, 1 = online, 2 = whitelist
 }
 
 type Player struct {
@@ -712,6 +714,20 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		scanLatency = getLatency(target.Host(), uint16(scanner.GetPort())).String()
 	}
 
+	serverAuthMode := -1 // Default to -1 (unknown)
+	if scanner.config.GrabAuthMode {
+		new_conn, err := target.Open(&scanner.config.BaseFlags)
+		if err != nil {
+			serverAuthMode = -1 // Default to -1 (unknown) if we can't connect
+		}
+		defer new_conn.Close()
+		authMode, err := getAuthMode(new_conn, decode.Protocol, target.Host(), uint16(scanner.GetPort()))
+		if err != nil {
+			serverAuthMode = -1 // Default to -1 (unknown) if we can't get the auth mode
+		}
+		serverAuthMode = authMode
+	}
+
 	return zgrab2.SCAN_SUCCESS, &Results{
 		Latency:  scanLatency,
 		Protocol: fmt.Sprintf("%d", decode.Protocol),
@@ -722,8 +738,9 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 			MaxPlayers    int `json:"maxPlayers"`
 			OnlinePlayers int `json:"onlinePlayers"`
 		}{decode.PlayerCount.Max, decode.PlayerCount.Online},
-		Players: ConvertPlayerSampleToPlayer(decode.Sample),
-		ModList: decode.ModList,
+		Players:  ConvertPlayerSampleToPlayer(decode.Sample),
+		ModList:  decode.ModList,
+		AuthMode: serverAuthMode,
 	}, nil
 }
 
