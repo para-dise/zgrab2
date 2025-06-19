@@ -719,13 +719,15 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		new_conn, err := target.Open(&scanner.config.BaseFlags)
 		if err != nil {
 			serverAuthMode = -1 // Default to -1 (unknown) if we can't connect
+		} else {
+			defer new_conn.Close() // Only defer if connection succeeded
+			authMode, err := getAuthMode(new_conn, decode.Protocol, target.Host(), uint16(scanner.GetPort()))
+			if err != nil {
+				serverAuthMode = -1 // Default to -1 (unknown) if we can't get the auth mode
+			} else {
+				serverAuthMode = authMode
+			}
 		}
-		defer new_conn.Close()
-		authMode, err := getAuthMode(new_conn, decode.Protocol, target.Host(), uint16(scanner.GetPort()))
-		if err != nil {
-			serverAuthMode = -1 // Default to -1 (unknown) if we can't get the auth mode
-		}
-		serverAuthMode = authMode
 	}
 
 	return zgrab2.SCAN_SUCCESS, &Results{

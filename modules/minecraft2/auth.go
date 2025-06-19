@@ -34,18 +34,20 @@ type varintReadResult struct {
 }
 
 func packVarint(val int) []byte {
-	var out []byte
+	var buf [10]byte // max length of VarInt is 5 bytes for 32-bit, 10 for 64-bit
+	i := 0
 	for {
-		temp := byte(val & 0x7F)
+		b := byte(val & 0x7F)
 		val >>= 7
 		if val != 0 {
-			out = append(out, temp|0x80)
+			buf[i] = b | 0x80
 		} else {
-			out = append(out, temp)
+			buf[i] = b
 			break
 		}
+		i++
 	}
-	return out
+	return buf[:i+1]
 }
 
 // packString encodes a UTF-8 string as VarInt length + bytes
@@ -161,6 +163,7 @@ func sendLoginStart(conn net.Conn, c *ConnectionData, botUsername string, botUUI
 func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan<- int, errChan chan<- error) {
 	defer func() {
 		if r := recover(); r != nil {
+			// Ensure channels are properly handled even during panic
 			select {
 			case errChan <- fmt.Errorf("panic in readLoop: %v", r):
 			case <-ctx.Done():
@@ -168,7 +171,7 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 		}
 	}()
 
-	buf := make([]byte, 0, 256)
+	buf := make([]byte, 0, 5) // VarInt max is 5 bytes
 	tmp := make([]byte, 1)
 
 	for {
@@ -178,7 +181,6 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 		default:
 		}
 
-		// Set read timeout to prevent indefinite blocking
 		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 			select {
 			case errChan <- fmt.Errorf("failed to set read deadline: %w", err):
@@ -187,7 +189,6 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 			return
 		}
 
-		// Read bytes one by one to parse VarInt packet length
 		buf = buf[:0]
 		for {
 			select {
@@ -198,10 +199,11 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 
 			_, err := conn.Read(tmp)
 			if err != nil {
-				if errors.Is(err, io.EOF) ||
-					strings.Contains(err.Error(), "use of closed network connection") ||
-					strings.Contains(err.Error(), "connection reset by peer") ||
-					strings.Contains(err.Error(), "connection refused") {
+				netErr, ok := err.(net.Error)
+				if ok && netErr.Timeout() {
+					continue // Skip timeout errors and retry
+				}
+				if errors.Is(err, io.EOF) || isClosedConnError(err) {
 					select {
 					case errChan <- ErrDisconnected:
 					case <-ctx.Done():
@@ -228,7 +230,6 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 			}
 		}
 
-		// Read full packet data based on packet length
 		lengthVarint, err := readVarint(buf)
 		if err != nil {
 			select {
@@ -239,7 +240,7 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 		}
 
 		packetLen := lengthVarint.value
-		if packetLen < 0 || packetLen > 1024*1024 { // Reasonable limit
+		if packetLen < 0 || packetLen > 1024*1024 {
 			select {
 			case errChan <- fmt.Errorf("invalid packet length: %d", packetLen):
 			case <-ctx.Done():
@@ -250,9 +251,7 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 		packetData := make([]byte, packetLen)
 		_, err = io.ReadFull(conn, packetData)
 		if err != nil {
-			if errors.Is(err, io.EOF) ||
-				strings.Contains(err.Error(), "use of closed network connection") ||
-				strings.Contains(err.Error(), "connection reset by peer") {
+			if errors.Is(err, io.EOF) || isClosedConnError(err) {
 				select {
 				case errChan <- ErrDisconnected:
 				case <-ctx.Done():
@@ -266,7 +265,6 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 			return
 		}
 
-		// Extract packet ID
 		if len(packetData) == 0 {
 			select {
 			case errChan <- ErrInvalidPacket:
@@ -285,37 +283,47 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan
 		}
 		packetID := packetIDResult.value
 
-		// Check for auth mode packets and stop reading once detected
 		switch packetID {
 		case 0x01:
-			// 0x01 Means auth mode is premium/online
 			select {
-			case result <- 1: // 1 for premium/online
+			case result <- 1:
 			case <-ctx.Done():
 			}
-			return // Stop the read loop immediately
+			return
 		case 0x02, 0x03:
-			// 0x03 or 0x02 Means auth mode is offline
 			select {
-			case result <- 0: // 0 for offline
+			case result <- 0:
 			case <-ctx.Done():
 			}
-			return // Stop the read loop immediately
+			return
 		case 0x00:
-			// 0x00 Means auth mode is whitelisted
 			select {
-			case result <- 2: // 2 for whitelisted
+			case result <- 2:
 			case <-ctx.Done():
 			}
-			return // Stop the read loop immediately
-		default:
-			// Continue reading for other packet IDs
+			return
 		}
 	}
 }
 
+// Helper function to check for closed connection errors
+func isClosedConnError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	str := err.Error()
+	if strings.Contains(str, "use of closed network connection") ||
+		strings.Contains(str, "connection reset by peer") ||
+		strings.Contains(str, "connection refused") {
+		return true
+	}
+	return false
+}
+
 func getAuthMode(conn net.Conn, protocolVersion int, host string, port uint16) (int, error) {
-	// Add connection timeout
+	defer conn.SetDeadline(time.Time{}) // Clear deadline when done
+
 	if err := conn.SetDeadline(time.Now().Add(60 * time.Second)); err != nil {
 		return -1, fmt.Errorf("failed to set connection deadline: %w", err)
 	}
@@ -328,37 +336,53 @@ func getAuthMode(conn net.Conn, protocolVersion int, host string, port uint16) (
 		return -1, fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	// Send Login Start
 	if err := sendLoginStart(conn, connection, "MCScans", "00000000-0000-0000-0000-000000000000", protocolVersion); err != nil {
 		return -1, fmt.Errorf("failed to send login start: %w", err)
 	}
 	connection.State = STATE_LOGIN
 
-	var wg sync.WaitGroup
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	authMode := make(chan int, 1)
 	errChan := make(chan error, 1)
 
+	// Use a wait group to ensure goroutine completes
+	var wg sync.WaitGroup
 	wg.Add(1)
+
 	go func() {
 		defer wg.Done()
+		defer func() {
+			// Ensure channels are closed if goroutine exits unexpectedly
+			select {
+			case <-authMode: // already closed
+			default:
+				close(authMode)
+			}
+			select {
+			case <-errChan: // already closed
+			default:
+				close(errChan)
+			}
+		}()
 		readLoop(ctx, conn, connection, authMode, errChan)
 	}()
 
+	defer wg.Wait() // Ensure goroutine completes before returning
+
 	select {
 	case <-ctx.Done():
-		cancel()
-		wg.Wait()
 		return -1, ErrTimeout
-	case mode := <-authMode:
-		cancel()
-		wg.Wait()
+	case mode, ok := <-authMode:
+		if !ok {
+			return -1, fmt.Errorf("auth mode channel closed unexpectedly")
+		}
 		return mode, nil
-	case err := <-errChan:
-		cancel()
-		wg.Wait()
+	case err, ok := <-errChan:
+		if !ok {
+			return -1, fmt.Errorf("error channel closed unexpectedly")
+		}
 		return -1, err
 	}
 }
