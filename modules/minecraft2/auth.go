@@ -19,8 +19,9 @@ var (
 	ErrVarintTooShort = errors.New("varint is too short")
 	STATE_STATUS      = 1
 	STATE_LOGIN       = 2
-	STATE_CONFIG      = 3
-	STATE_PLAY        = 4
+	ErrTimeout        = errors.New("timeout waiting for auth mode")
+	ErrDisconnected   = errors.New("disconnected by server")
+	ErrInvalidPacket  = errors.New("invalid packet format")
 )
 
 type ConnectionData struct {
@@ -113,9 +114,7 @@ func sendLoginStart(conn net.Conn, c *ConnectionData, botUsername string, botUUI
 	// 1.19.3 - 1.20.1: username, has UUID, uuid (761 - 763)
 	// 1.20.2+: username, uuid (764+)
 
-	// 0x00, name:String, uuid(16 bytes)
 	var buf bytes.Buffer
-	var err error
 	buf.Write(packVarint(0x00))        // packet id
 	buf.Write(packString(botUsername)) // username
 
@@ -130,7 +129,7 @@ func sendLoginStart(conn net.Conn, c *ConnectionData, botUsername string, botUUI
 		buf.WriteByte(0x01) // has UUID field (true)
 		uuidBytes, err := parseUUID(botUUID)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse UUID: %w", err)
 		}
 		buf.Write(uuidBytes)
 	} else if activeProtocolVersion >= 761 && activeProtocolVersion <= 763 {
@@ -138,26 +137,37 @@ func sendLoginStart(conn net.Conn, c *ConnectionData, botUsername string, botUUI
 		buf.WriteByte(0x01) // has UUID field (true)
 		uuidBytes, err := parseUUID(botUUID)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse UUID: %w", err)
 		}
 		buf.Write(uuidBytes)
 	} else if activeProtocolVersion >= 764 {
 		// 1.20.2+: username, uuid (no Has Sig Data, no has uuid field)
 		uuidBytes, err := parseUUID(botUUID)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to parse UUID: %w", err)
 		}
 		buf.Write(uuidBytes)
 	}
 
 	packet := buf.Bytes()
 	fullPacket := append(packVarint(len(packet)), packet...)
-	_, err = conn.Write(fullPacket)
-	return err
+	_, err := conn.Write(fullPacket)
+	if err != nil {
+		return fmt.Errorf("failed to send login start: %w", err)
+	}
+	return nil
 }
 
-func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, disconnected chan struct{}, authMode chan int) {
-	defer close(disconnected)
+func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, result chan<- int, errChan chan<- error) {
+	defer func() {
+		if r := recover(); r != nil {
+			select {
+			case errChan <- fmt.Errorf("panic in readLoop: %v", r):
+			case <-ctx.Done():
+			}
+		}
+	}()
+
 	buf := make([]byte, 0, 256)
 	tmp := make([]byte, 1)
 
@@ -168,23 +178,52 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, disconnecte
 		default:
 		}
 
+		// Set read timeout to prevent indefinite blocking
+		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			select {
+			case errChan <- fmt.Errorf("failed to set read deadline: %w", err):
+			case <-ctx.Done():
+			}
+			return
+		}
+
 		// Read bytes one by one to parse VarInt packet length
 		buf = buf[:0]
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			_, err := conn.Read(tmp)
 			if err != nil {
-				if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "use of closed network connection") {
+				if errors.Is(err, io.EOF) ||
+					strings.Contains(err.Error(), "use of closed network connection") ||
+					strings.Contains(err.Error(), "connection reset by peer") ||
+					strings.Contains(err.Error(), "connection refused") {
+					select {
+					case errChan <- ErrDisconnected:
+					case <-ctx.Done():
+					}
 					return
 				}
-				fmt.Println("Error reading packet length:", err)
+				select {
+				case errChan <- fmt.Errorf("error reading packet length: %w", err):
+				case <-ctx.Done():
+				}
 				return
 			}
+
 			buf = append(buf, tmp[0])
 			if tmp[0]&0x80 == 0 {
 				break
 			}
 			if len(buf) > 5 {
-				fmt.Println("VarInt too long (packet length)")
+				select {
+				case errChan <- ErrVarintTooLong:
+				case <-ctx.Done():
+				}
 				return
 			}
 		}
@@ -192,21 +231,56 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, disconnecte
 		// Read full packet data based on packet length
 		lengthVarint, err := readVarint(buf)
 		if err != nil {
-			fmt.Println("Error decoding packet length:", err)
+			select {
+			case errChan <- fmt.Errorf("error decoding packet length: %w", err):
+			case <-ctx.Done():
+			}
 			return
 		}
+
 		packetLen := lengthVarint.value
+		if packetLen < 0 || packetLen > 1024*1024 { // Reasonable limit
+			select {
+			case errChan <- fmt.Errorf("invalid packet length: %d", packetLen):
+			case <-ctx.Done():
+			}
+			return
+		}
+
 		packetData := make([]byte, packetLen)
 		_, err = io.ReadFull(conn, packetData)
 		if err != nil {
-			fmt.Println("Error reading packet body:", err)
+			if errors.Is(err, io.EOF) ||
+				strings.Contains(err.Error(), "use of closed network connection") ||
+				strings.Contains(err.Error(), "connection reset by peer") {
+				select {
+				case errChan <- ErrDisconnected:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case errChan <- fmt.Errorf("error reading packet body: %w", err):
+			case <-ctx.Done():
+			}
 			return
 		}
 
 		// Extract packet ID
+		if len(packetData) == 0 {
+			select {
+			case errChan <- ErrInvalidPacket:
+			case <-ctx.Done():
+			}
+			return
+		}
+
 		packetIDResult, err := readVarint(packetData)
 		if err != nil {
-			fmt.Println("Error decoding packet ID:", err)
+			select {
+			case errChan <- fmt.Errorf("error decoding packet ID: %w", err):
+			case <-ctx.Done():
+			}
 			return
 		}
 		packetID := packetIDResult.value
@@ -216,75 +290,75 @@ func readLoop(ctx context.Context, conn net.Conn, c *ConnectionData, disconnecte
 		case 0x01:
 			// 0x01 Means auth mode is premium/online
 			select {
-			case authMode <- 1: // 1 for premium/online
+			case result <- 1: // 1 for premium/online
 			case <-ctx.Done():
 			}
 			return // Stop the read loop immediately
 		case 0x02, 0x03:
 			// 0x03 or 0x02 Means auth mode is offline
 			select {
-			case authMode <- 0: // 0 for offline
+			case result <- 0: // 0 for offline
 			case <-ctx.Done():
 			}
 			return // Stop the read loop immediately
 		case 0x00:
 			// 0x00 Means auth mode is whitelisted
 			select {
-			case authMode <- 2: // 2 for whitelisted
+			case result <- 2: // 2 for whitelisted
 			case <-ctx.Done():
 			}
 			return // Stop the read loop immediately
 		default:
-			// do nothing for other packet IDs
+			// Continue reading for other packet IDs
 		}
 	}
 }
 
 func getAuthMode(conn net.Conn, protocolVersion int, host string, port uint16) (int, error) {
-	disconnectingGracefully := false
+	// Add connection timeout
+	if err := conn.SetDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		return -1, fmt.Errorf("failed to set connection deadline: %w", err)
+	}
+
 	connection := &ConnectionData{
 		State: STATE_STATUS,
 	}
+
 	if err := sendHandshakeWithParams(conn, connection, host, port, protocolVersion); err != nil {
-		return -1, err
+		return -1, fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	// 2) Send Login Start
+	// Send Login Start
 	if err := sendLoginStart(conn, connection, "MCScans", "00000000-0000-0000-0000-000000000000", protocolVersion); err != nil {
-		return -1, err
+		return -1, fmt.Errorf("failed to send login start: %w", err)
 	}
 	connection.State = STATE_LOGIN
 
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	disconnected := make(chan struct{})
-	authMode := make(chan int, 1) // Buffered channel to receive auth mode
+	authMode := make(chan int, 1)
+	errChan := make(chan error, 1)
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		readLoop(ctx, conn, connection, disconnected, authMode)
+		readLoop(ctx, conn, connection, authMode, errChan)
 	}()
 
 	select {
-	case <-time.After(30 * time.Second):
+	case <-ctx.Done():
 		cancel()
 		wg.Wait()
-		return -1, errors.New("timeout waiting for auth mode")
+		return -1, ErrTimeout
 	case mode := <-authMode:
 		cancel()
 		wg.Wait()
 		return mode, nil
-	case <-disconnected:
-		if !disconnectingGracefully {
-			cancel()
-			wg.Wait()
-			return -1, errors.New("disconnected by server")
-		}
+	case err := <-errChan:
 		cancel()
 		wg.Wait()
-		return -1, errors.New("disconnected gracefully but no auth mode received")
+		return -1, err
 	}
 }
