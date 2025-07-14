@@ -1,8 +1,12 @@
 package zgrab2
 
 import (
+	"bytes"
 	"fmt"
 	"log"
+	"os"
+	"runtime"
+	"runtime/pprof"
 	"time"
 )
 
@@ -26,6 +30,30 @@ func PrintScanners() {
 	}
 }
 
+func startHeapProfiling() {
+	go func() {
+		for {
+			var buf bytes.Buffer
+			runtime.GC() // get up-to-date heap stats
+			err := pprof.WriteHeapProfile(&buf)
+			if err != nil {
+				log.Println("Failed to write heap profile:", err)
+				continue
+			}
+
+			// Save snapshot to disk if safe
+			t := time.Now().Format("20060102-150405")
+			fname := "heap-" + t + ".pprof"
+			if f, err := os.Create(fname); err == nil {
+				f.Write(buf.Bytes())
+				f.Close()
+			}
+
+			time.Sleep(10 * time.Second)
+		}
+	}()
+}
+
 // RunScanner runs a single scan on a target and returns the resulting data
 func RunScanner(s Scanner, mon *Monitor, target ScanTarget) (string, ScanResponse) {
 	t := time.Now()
@@ -44,5 +72,6 @@ func RunScanner(s Scanner, mon *Monitor, target ScanTarget) (string, ScanRespons
 }
 
 func init() {
+	startHeapProfiling()
 	scanners = make(map[string]*Scanner)
 }

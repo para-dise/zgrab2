@@ -1,4 +1,4 @@
-// Minecraft module to grab the server's MOTD and version
+// Minecraft module to grab the server's MOTD and version for bedrock edition
 package bedrock
 
 import (
@@ -25,6 +25,46 @@ func ReadBigInt64BE(buffer []byte, offset int) int64 {
 func ReadStringFromBuffer(buffer []byte, offset int) string {
 	length := int(binary.BigEndian.Uint16(buffer[offset:]))
 	return string(buffer[offset+2 : offset+2+length])
+}
+
+// ParseUnconnectedPong extracts the Server ID string from raw Unconnected Pong packet bytes
+func ParseUnconnectedPong(packetData []byte) (string, error) {
+	if len(packetData) < 33 { // Minimum: 1 byte packet ID + 32 bytes headers
+		return "", errors.New("packet too short to be a valid Unconnected Pong packet")
+	}
+
+	// Check packet ID (should be 0x1c for Unconnected Pong)
+	if packetData[0] != 0x1c {
+		return "", fmt.Errorf("invalid packet ID: expected 0x1c, got 0x%02x", packetData[0])
+	}
+
+	offset := 1
+
+	// Skip Time (8 bytes)
+	offset += 8
+
+	// Skip Server GUID (8 bytes)
+	offset += 8
+
+	// Skip MAGIC (16 bytes)
+	offset += 16
+
+	// Read string length (2 bytes, unsigned short, big-endian)
+	if len(packetData) < offset+2 {
+		return "", errors.New("packet too short to contain string length")
+	}
+
+	stringLength := binary.BigEndian.Uint16(packetData[offset : offset+2])
+	offset += 2
+
+	// Read the Server ID string
+	if len(packetData) < offset+int(stringLength) {
+		return "", fmt.Errorf("packet too short to contain Server ID string of length %d", stringLength)
+	}
+
+	serverIDString := string(packetData[offset : offset+int(stringLength)])
+
+	return serverIDString, nil
 }
 
 // ParseAdvertiseString parses the advertise string into a struct.
@@ -207,10 +247,13 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 
 		buffer = buffer[:length]
 
-		// Process response
-		bufData := ReadStringFromBuffer(buffer, 25)
-		parsedData, err := ParseAdvertiseString(bufData)
+		// FIXED: Use proper packet parsing instead of hardcoded offset
+		bufData, err := ParseUnconnectedPong(buffer)
+		if err != nil {
+			return zgrab2.TryGetScanStatus(err), nil, err
+		}
 
+		parsedData, err := ParseAdvertiseString(bufData)
 		if err != nil {
 			return zgrab2.TryGetScanStatus(err), nil, err
 		}
@@ -232,8 +275,6 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		result.PlayerStats = playerstats
 		result.Name = parsedData.Name
 		result.Mode = parsedData.Mode
-
-		break
 	}
 
 	if panicErr != nil {
