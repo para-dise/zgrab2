@@ -72,6 +72,6 @@ func RunScanner(s Scanner, mon *Monitor, target ScanTarget) (string, ScanRespons
 }
 
 func init() {
-	startHeapProfiling()
+	//startHeapProfiling()
 	scanners = make(map[string]*Scanner)
 }
