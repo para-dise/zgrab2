@@ -519,114 +519,87 @@ func decodeOptimized(s string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, interface{}, error) {
+func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (status zgrab2.ScanStatus, result interface{}, err error) {
 
-	hasPanic := false
-
-	/* In case of a panic, recover and return a ScanError */
+	// panic recovery
 	defer func() {
 		if r := recover(); r != nil {
-			hasPanic = true
+			err = fmt.Errorf("panic: %v", r)
+			status = zgrab2.TryGetScanStatus(err)
+			result = nil
 		}
 	}()
 
-	if hasPanic {
-		panicErr := errors.New("Panic")
-		return zgrab2.TryGetScanStatus(panicErr), nil, panicErr
-	}
-
-	/* Begin new Minecraft scan */
-	var (
-		conn net.Conn
-		err  error
-		ret  []byte
-	)
-
-	// Connect to the server
-	conn, err = target.Open(&scanner.config.BaseFlags)
-
+	// connect
+	conn, err := target.Open(&scanner.config.BaseFlags)
 	if err != nil {
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
+	defer conn.Close()
 
 	sendPacket(target.Host(), uint16(scanner.GetPort()), &conn)
 
-	var waitTime = 2 * time.Second
+	waitTime := 2 * time.Second
 	if scanner.config.MaxTimeout != 0 {
 		waitTime = time.Duration(scanner.config.MaxTimeout) * time.Second
 	}
 
-	ret, _ = zgrab2.ReadAvailableWithOptions(conn, 65535, waitTime, waitTime, 65535)
-	defer conn.Close()
+	ret, _ := zgrab2.ReadAvailableWithOptions(conn, 65535, waitTime, waitTime, 65535)
 
 	if len(ret) < 3 {
-		err = errors.New("error to small response")
+		err = errors.New("response too small")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 
-	// Length: varint, Packet ID: varint, Data: byte[]
-	// attempt to read length of packet
-	_, varint_size, err := read_varint(ret)
+	// remove packet length
+	_, n, err := read_varint(ret)
 	if err != nil {
-		err = errors.New("error reading varint (packet len)")
-		return zgrab2.TryGetScanStatus(err), nil, err
+		return zgrab2.TryGetScanStatus(err), nil, errors.New("error reading packet length")
 	}
+	ret = ret[n:]
 
-	// truncate first varint
-	ret = ret[varint_size:]
-	// attempt to read packet ID
-	_, varint_size, err = read_varint(ret)
+	// remove packet id
+	_, n, err = read_varint(ret)
 	if err != nil {
-		err = errors.New("error reading varint (packet id)")
-		return zgrab2.TryGetScanStatus(err), nil, err
+		return zgrab2.TryGetScanStatus(err), nil, errors.New("error reading packet id")
 	}
-	// truncate second varint
-	ret = ret[varint_size:]
+	ret = ret[n:]
 
 	if len(ret) < 10 {
-		err = errors.New("error to small response")
+		err = errors.New("response too small")
 		return zgrab2.TryGetScanStatus(err), nil, err
-	} else if len(ret) > 700000 {
-		err = errors.New("error to big response")
+	}
+	if len(ret) > 700000 {
+		err = errors.New("response too large")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 
-	// remove all characters until the first '{'
-
-	// check if '{' or '}' exists within the first 10 bytes
-	if bytes.IndexByte(ret, '{') == -1 || bytes.IndexByte(ret, '}') == -1 {
-		err = errors.New("error no json")
+	// extract JSON object
+	start := bytes.IndexByte(ret, '{')
+	end := bytes.LastIndexByte(ret, '}')
+	if start == -1 || end == -1 || start >= end {
+		err = errors.New("invalid json")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
-
-	ret = ret[bytes.IndexByte(ret, '{'):]
-	// remove all characters after last '}'
-	ret = ret[:bytes.LastIndexByte(ret, '}')+1]
+	ret = ret[start : end+1]
 
 	decode, err := decodeResponse(string(ret), target.Host())
-	// TODO: Add proper error handling
-
 	if err != nil {
-		err = errors.New("panic")
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 
-	var scanLatency = ""
+	// latency
+	var scanLatency string
 	if scanner.config.EnableLatency {
 		scanLatency = getLatency(target.Host(), uint16(scanner.GetPort())).String()
 	}
 
-	serverAuthMode := -1 // Default to -1 (unknown)
+	// auth mode
+	serverAuthMode := -1
 	if scanner.config.GrabAuthMode {
-		new_conn, err := target.Open(&scanner.config.BaseFlags)
-		if err != nil {
-			serverAuthMode = -1 // Default to -1 (unknown) if we can't connect
-		} else {
-			defer new_conn.Close() // Only defer if connection succeeded
-			authMode, err := getAuthMode(new_conn, decode.Protocol, target.Host(), uint16(scanner.GetPort()))
-			if err != nil {
-				serverAuthMode = -1 // Default to -1 (unknown) if we can't get the auth mode
-			} else {
+		if newConn, err := target.Open(&scanner.config.BaseFlags); err == nil {
+			defer newConn.Close()
+			if authMode, err := getAuthMode(newConn, decode.Protocol, target.Host(), uint16(scanner.GetPort())); err == nil {
 				serverAuthMode = authMode
 			}
 		}
@@ -641,7 +614,10 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		PlayerStats: struct {
 			MaxPlayers    int `json:"maxPlayers"`
 			OnlinePlayers int `json:"onlinePlayers"`
-		}{decode.PlayerCount.Max, decode.PlayerCount.Online},
+		}{
+			decode.PlayerCount.Max,
+			decode.PlayerCount.Online,
+		},
 		Players:  ConvertPlayerSampleToPlayer(decode.Sample),
 		ModList:  decode.ModList,
 		AuthMode: serverAuthMode,
