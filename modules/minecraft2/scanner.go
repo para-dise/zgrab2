@@ -198,45 +198,27 @@ type Channel struct {
 	Required bool
 }
 
+var minecraftColors = map[string]string{
+	"black":        "§0",
+	"dark_blue":    "§1",
+	"dark_green":   "§2",
+	"dark_aqua":    "§3",
+	"dark_red":     "§4",
+	"dark_purple":  "§5",
+	"gold":         "§6",
+	"gray":         "§7",
+	"dark_gray":    "§8",
+	"blue":         "§9",
+	"green":        "§a",
+	"aqua":         "§b",
+	"red":          "§c",
+	"light_purple": "§d",
+	"yellow":       "§e",
+	"white":        "§f",
+}
+
 func convertColorToMinecraftColor(color string) string {
-	// convert color name to § character
-	switch color {
-	case "black":
-		return "§0"
-	case "dark_blue":
-		return "§1"
-	case "dark_green":
-		return "§2"
-	case "dark_aqua":
-		return "§3"
-	case "dark_red":
-		return "§4"
-	case "dark_purple":
-		return "§5"
-	case "gold":
-		return "§6"
-	case "gray":
-		return "§7"
-	case "dark_gray":
-		return "§8"
-	case "blue":
-		return "§9"
-	case "green":
-		return "§a"
-	case "aqua":
-		return "§b"
-	case "red":
-		return "§c"
-	case "light_purple":
-		return "§d"
-	case "yellow":
-		return "§e"
-	case "white":
-		return "§f"
-	default:
-		// if color is not recognized, return empty string
-		return ""
-	}
+	return minecraftColors[color]
 }
 
 const maxExtraDepth = 50 // prevent infinite recursion in extra parsing
