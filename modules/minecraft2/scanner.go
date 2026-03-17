@@ -255,272 +255,192 @@ func parseExtra(extra interface{}, depth int) string {
 }
 
 func decodeResponse(response string, hostAddress string) (*CustomPingResponse, error) {
-
 	var panicErr error
-	// prevent panics
+
+	// panic recovery
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println("Recovered in f", r)
-
-			// Get the traceback
 			trace := make([]byte, 1<<16)
 			n := runtime.Stack(trace, true)
 			trace = trace[:n]
 
-			// Write the traceback to a file
 			file, err := os.Create("traceback_" + hostAddress + ".txt")
-			if err != nil {
-				fmt.Println("Error creating file:", err)
-				return
-			}
-			defer file.Close()
-
-			// append hostAddress to traceback
-			trace = append([]byte(hostAddress+" - "), trace...)
-
-			_, err = file.WriteString(string(trace))
-			if err != nil {
-				fmt.Println("Error writing to file:", err)
-				return
+			if err == nil {
+				defer file.Close()
+				trace = append([]byte(hostAddress+" - "), trace...)
+				file.WriteString(string(trace))
 			}
 
-			// Set the error message
-			panicErr = fmt.Errorf("Recovered in f: %v\nTraceback:\n%s", r, trace)
+			panicErr = fmt.Errorf("Recovered: %v\n%s", r, trace)
 		}
 	}()
 
-	if panicErr != nil {
-		return nil, panicErr
+	// helpers
+	getMap := func(v interface{}) (map[string]interface{}, bool) {
+		m, ok := v.(map[string]interface{})
+		return m, ok
+	}
+	getArr := func(v interface{}) ([]interface{}, bool) {
+		a, ok := v.([]interface{})
+		return a, ok
+	}
+	getString := func(m map[string]interface{}, key string) string {
+		if v, ok := m[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+	getInt := func(m map[string]interface{}, key string, def int) int {
+		if v, ok := m[key].(float64); ok {
+			return int(v)
+		}
+		return def
 	}
 
-	// {"enforcesSecureChat":false,"description":{"text":"A Minecraft Server"},"players":{"max":20,"online":1,"sample":[{"id":"d331d3ab-cd55-3c58-ab6f-e75b1e27b6d0","name":"xSpeziato"}]},"version":{"name":"Paper 1.19.3","protocol":761}}
 	var data interface{}
-	json.Unmarshal([]byte(response), &data)
+	if err := json.Unmarshal([]byte(response), &data); err != nil {
+		return nil, err
+	}
 
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		// create new PingResponse
-		pingResponse := CustomPingResponse{}
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("Invalid JSON response")
+	}
 
-		// check if version field exists
-		var version = "Unknown"
-		if _, ok := dataMap["version"]; ok {
-			// if name exists under version, use it
-			if _, ok := dataMap["version"].(map[string]interface{})["name"]; ok {
-				version = dataMap["version"].(map[string]interface{})["name"].(string)
-			}
+	// Version
+	version := "Unknown"
+	if vMap, ok := getMap(dataMap["version"]); ok {
+		if name := getString(vMap, "name"); name != "" {
+			version = name
 		}
+	}
 
-		var motd = ""
-		if _, ok := dataMap["description"]; ok {
-			// check if description is a map or a string (BungeeCord)
-			if _, ok := dataMap["description"].(map[string]interface{}); ok {
-				// if text exists under description, use it
-				if _, ok := dataMap["description"].(map[string]interface{})["text"]; ok {
-					motd = dataMap["description"].(map[string]interface{})["text"].(string)
-				}
-
-				// check "extra" array exists under description
-				descMap := dataMap["description"].(map[string]interface{})
-
-				if extra, ok := descMap["extra"]; ok {
-					motd += parseExtra(extra, 0)
-				}
-			} else {
-				if _, ok := dataMap["description"].(string); ok {
-					motd = dataMap["description"].(string)
+	// MOTD
+	parseTextArray := func(arr []interface{}) (out string) {
+		for _, v := range arr {
+			switch val := v.(type) {
+			case string:
+				out += val
+			case map[string]interface{}:
+				if text, ok := val["text"].(string); ok {
+					out += text
 				}
 			}
 		}
+		return
+	}
 
-		// check if MOTD is empty, this is the case for BungeeCord & its forks
-		if motd == "" {
-			// if description is a map
-			if _, ok := dataMap["description"].(map[string]interface{}); ok {
-				if _, ok := dataMap["description"].(map[string]interface{})["extra"]; ok {
-					if _, ok := dataMap["description"].(map[string]interface{})["extra"].([]interface{}); ok {
-						extraArray := dataMap["description"].(map[string]interface{})["extra"].([]interface{})
-						for _, value := range extraArray {
-							// In some strange cases, the extra array contains strings
+	motd := ""
+	if desc, ok := dataMap["description"]; ok {
+		switch d := desc.(type) {
+		case string:
+			motd = d
 
-							// TODO: What if the extra array has both a string and a map?
-							if _, ok := value.(string); ok {
-								motd += value.(string)
-								continue
-							}
-
-							if _, ok := value.(map[string]interface{})["text"]; ok {
-								// if text is a string
-								if _, ok := value.(map[string]interface{})["text"].(string); ok {
-									motd += value.(map[string]interface{})["text"].(string)
-								}
-							}
-						}
-					}
-				}
-			} else {
-				// if motd is an array of objects
-				if _, ok := dataMap["description"].([]interface{}); ok {
-					extraArray := dataMap["description"].([]interface{})
-					for _, value := range extraArray {
-						if _, ok := value.(map[string]interface{})["text"]; ok {
-							// if text is a string
-							if _, ok := value.(map[string]interface{})["text"].(string); ok {
-								motd += value.(map[string]interface{})["text"].(string)
-							}
-						}
-					}
-				}
+		case map[string]interface{}:
+			motd = getString(d, "text")
+			if extra, ok := getArr(d["extra"]); ok {
+				motd += parseTextArray(extra)
 			}
+
+		case []interface{}:
+			motd = parseTextArray(d)
 		}
+	}
 
-		if motd == "" {
-			motd = "Unknown"
-		}
+	if motd == "" {
+		motd = "Unknown"
+	}
 
-		// create new PlayerCount
-		playerCount := types.PlayerCount{}
+	// PLAYERS
+	playerCount := types.PlayerCount{Max: -1, Online: -1}
+	if pMap, ok := getMap(dataMap["players"]); ok {
+		playerCount.Max = getInt(pMap, "max", -1)
+		playerCount.Online = getInt(pMap, "online", -1)
+	}
 
-		// check if players field exists
-		if _, ok := dataMap["players"]; ok {
-			// check if max and online fields exist
-			if _, ok := dataMap["players"].(map[string]interface{})["max"]; ok {
-				playerCount.Max = int(dataMap["players"].(map[string]interface{})["max"].(float64))
-			} else {
-				playerCount.Max = -1
-			}
-			if _, ok := dataMap["players"].(map[string]interface{})["online"]; ok {
-				playerCount.Online = int(dataMap["players"].(map[string]interface{})["online"].(float64))
-			} else {
-				playerCount.Online = -1
-			}
-		}
+	// PROTOCOL
+	protocol := -1
+	if vMap, ok := getMap(dataMap["version"]); ok {
+		protocol = getInt(vMap, "protocol", -1)
+	}
 
-		// check if Protocol field exists
-		var protocol = -1
-		// if version exists
-		if _, ok := dataMap["version"]; ok {
-			// if protocol exists under version, use it
-			if _, ok := dataMap["version"].(map[string]interface{})["protocol"]; ok {
-				protocol = int(dataMap["version"].(map[string]interface{})["protocol"].(float64))
-			}
-		}
+	// FAVICON
+	favicon := ""
+	if f, ok := dataMap["favicon"].(string); ok {
+		favicon = f
+	}
 
-		// check if favicon field exists
-		var favicon string
-		if _, ok := dataMap["favicon"]; ok {
-			favicon = dataMap["favicon"].(string)
-		} else {
-			favicon = ""
-		}
-
-		var playerSamples []types.PlayerSample
-		// check if sample field exists under players
-		if playersMap, ok := dataMap["players"].(map[string]interface{}); ok {
-			if sample, ok := playersMap["sample"].([]interface{}); ok {
-				for _, v := range sample {
-					sample := types.PlayerSample{}
-					if id, ok := v.(map[string]interface{})["id"].(string); ok {
-						sample.UUID = id
-					} else {
-						sample.UUID = ""
-					}
-					if name, ok := v.(map[string]interface{})["name"].(string); ok {
-						sample.Name = name
-					} else {
-						sample.Name = ""
-					}
-					playerSamples = append(playerSamples, sample)
+	// SAMPLE PLAYERS
+	var playerSamples []types.PlayerSample
+	if pMap, ok := getMap(dataMap["players"]); ok {
+		if sampleArr, ok := getArr(pMap["sample"]); ok {
+			for _, v := range sampleArr {
+				if m, ok := getMap(v); ok {
+					playerSamples = append(playerSamples, types.PlayerSample{
+						UUID: getString(m, "id"),
+						Name: getString(m, "name"),
+					})
 				}
 			}
 		}
+	}
 
-		// set fml
-		var forgeModList []FMLMod
-		if _, ok := dataMap["modinfo"]; ok {
-			// check if modinfo["modList"] exists
-			if modList, ok := dataMap["modinfo"].(map[string]interface{})["modList"].([]interface{}); ok {
-				for _, v := range modList {
-					// create new FMLMod
-					fmlMod := FMLMod{}
-					if modid, ok := v.(map[string]interface{})["modid"].(string); ok {
-						fmlMod.ModId = modid
-					} else {
-						fmlMod.ModId = ""
-					}
+	// MODS
+	var forgeModList []FMLMod
 
-					if version, ok := v.(map[string]interface{})["version"].(string); ok {
-						fmlMod.Version = version
-					} else {
-						fmlMod.Version = ""
-					}
-					forgeModList = append(forgeModList, fmlMod)
+	if modinfo, ok := getMap(dataMap["modinfo"]); ok {
+		if modList, ok := getArr(modinfo["modList"]); ok {
+			for _, v := range modList {
+				if m, ok := getMap(v); ok {
+					forgeModList = append(forgeModList, FMLMod{
+						ModId:   getString(m, "modid"),
+						Version: getString(m, "version"),
+					})
 				}
 			}
 		}
+	}
 
-		// check if "modpackData" is present
-		if _, ok := dataMap["modpackData"]; ok {
-			// change "Version" to begin with "Fabric"
-			version = "Fabric " + version
+	if mp, ok := getMap(dataMap["modpackData"]); ok {
+		version = "Fabric " + version
+		forgeModList = append(forgeModList, FMLMod{
+			ModId:   getString(mp, "name"),
+			Version: getString(mp, "version"),
+		})
+	}
 
-			fmlMod := FMLMod{}
-			if _, ok := dataMap["modpackData"].(map[string]interface{})["name"]; ok {
-				fmlMod.ModId = dataMap["modpackData"].(map[string]interface{})["name"].(string)
-			}
-			if _, ok := dataMap["modpackData"].(map[string]interface{})["version"]; ok {
-				fmlMod.Version = dataMap["modpackData"].(map[string]interface{})["version"].(string)
-			}
-			forgeModList = append(forgeModList, fmlMod)
+	if fd, ok := getMap(dataMap["forgeData"]); ok {
+		isModern := false
+		if v, ok := fd["fmlNetworkVersion"].(float64); ok && v == 0 {
+			isModern = true
 		}
 
-		// apparently forge also uses "forgeData" now
-		if _, ok := dataMap["forgeData"]; ok {
-			// print fmlNetworkVersion
-			isModernNetworkVersion := false
-			if _, ok := dataMap["forgeData"].(map[string]interface{})["fmlNetworkVersion"]; ok {
-				version := dataMap["forgeData"].(map[string]interface{})["fmlNetworkVersion"].(float64)
-				if version == 0 {
-					isModernNetworkVersion = true
-				}
-			}
-			// change "Version" to begin with "Forge"
-			version = "Forge " + version
-			// decompress forgeData "d" field
-			if _, ok := dataMap["forgeData"].(map[string]interface{})["d"]; ok {
-				decompressed, err := decodeOptimized(dataMap["forgeData"].(map[string]interface{})["d"].(string))
-				if err != nil {
-					fmt.Println("Error decompressing forgeData:", err, " - ", hostAddress)
-				}
+		version = "Forge " + version
 
-				// use forge's custom decoding
-				mods, err := decodeForgePayload(decompressed, isModernNetworkVersion)
-				if err != nil {
-					fmt.Println("Error decoding forgeData:", err, " - ", hostAddress)
-				} else {
+		if d, ok := fd["d"].(string); ok {
+			if decompressed, err := decodeOptimized(d); err == nil {
+				if mods, err := decodeForgePayload(decompressed, isModern); err == nil {
 					forgeModList = append(forgeModList, mods...)
 				}
 			}
 		}
-
-		// neoforge is special and uses the "isModded" field
-		if _, ok := dataMap["isModded"]; ok {
-			// change "Version" to begin with "NeoForge"
-			version = "NeoForge " + version
-		}
-
-		pingResponse.Latency = 0
-		pingResponse.PlayerCount = playerCount
-		pingResponse.Protocol = protocol
-		pingResponse.Favicon = favicon
-		pingResponse.Motd = motd
-		pingResponse.Version = version
-		pingResponse.Sample = playerSamples
-		pingResponse.ModList = forgeModList
-
-		return &pingResponse, nil
-	} else {
-		return nil, errors.New("Invalid JSON response")
 	}
+
+	if _, ok := dataMap["isModded"]; ok {
+		version = "NeoForge " + version
+	}
+
+	// FINAL
+	return &CustomPingResponse{
+		Latency:     0,
+		PlayerCount: playerCount,
+		Protocol:    protocol,
+		Favicon:     favicon,
+		Motd:        motd,
+		Version:     version,
+		Sample:      playerSamples,
+		ModList:     forgeModList,
+	}, panicErr
 }
 
 /***
