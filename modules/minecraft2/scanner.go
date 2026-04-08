@@ -316,20 +316,6 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 	}
 
 	// MOTD
-	parseTextArray := func(arr []interface{}) (out string) {
-		for _, v := range arr {
-			switch val := v.(type) {
-			case string:
-				out += val
-			case map[string]interface{}:
-				if text, ok := val["text"].(string); ok {
-					out += text
-				}
-			}
-		}
-		return
-	}
-
 	motd := ""
 	if desc, ok := dataMap["description"]; ok {
 		switch d := desc.(type) {
@@ -339,11 +325,11 @@ func decodeResponse(response string, hostAddress string) (*CustomPingResponse, e
 		case map[string]interface{}:
 			motd = getString(d, "text")
 			if extra, ok := getArr(d["extra"]); ok {
-				motd += parseTextArray(extra)
+				motd += parseExtra(extra, 0)
 			}
 
 		case []interface{}:
-			motd = parseTextArray(d)
+			motd = parseExtra(d, 0)
 		}
 	}
 
